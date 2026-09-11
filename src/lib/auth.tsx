@@ -13,7 +13,7 @@ type AuthContextValue = {
   /** True when the current session came from a password-recovery link, not a normal sign-in. */
   isPasswordRecovery: boolean;
   signInWithPassword: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUpWithPassword: (email: string, password: string, name: string) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
+  signUpWithPassword: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   logout: () => Promise<void>;
   updateProfile: (patch: { name?: string; email?: string }) => Promise<{ error: string | null; emailChangePending?: boolean }>;
@@ -61,13 +61,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signUpWithPassword(email: string, password: string, name: string) {
     const supabase = createClient();
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: name }, emailRedirectTo: `${window.location.origin}/auth/callback` },
-    });
-    if (error) return { error: error.message, needsEmailConfirmation: false };
-    return { error: null, needsEmailConfirmation: !data.session };
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
+    if (error) return { error: error.message };
+    if (!data.session) {
+      // The Supabase project still has "Confirm email" turned on, so signUp() didn't return a
+      // session. Surface this as an actionable error rather than silently bouncing the user
+      // between /dashboard and /login.
+      return {
+        error: "Account created, but this project still requires email confirmation. Turn off \"Confirm email\" in Supabase (Authentication → Sign In / Providers → Email) to sign in immediately.",
+      };
+    }
+    return { error: null };
   }
 
   async function signInWithGoogle() {
