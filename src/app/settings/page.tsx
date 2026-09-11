@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import AppShell from "@/components/AppShell";
 import Switch from "@/components/Switch";
 import { useRequireAuth } from "@/lib/auth";
@@ -86,6 +87,7 @@ export default function SettingsPage() {
 
   function handleLogout() {
     logout();
+    signOut({ redirect: false });
     router.push("/login");
   }
 

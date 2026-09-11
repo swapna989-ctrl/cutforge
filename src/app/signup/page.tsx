@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthShell from "@/components/AuthShell";
 import PasswordInput from "@/components/PasswordInput";
+import GoogleButton from "@/components/GoogleButton";
 import { useAuth } from "@/lib/auth";
 
 export default function SignupPage() {
@@ -33,6 +34,14 @@ export default function SignupPage() {
     <AuthShell>
       <h1 className="font-display text-2xl font-semibold text-white text-center mb-1">Create your account</h1>
       <p className="text-xs text-zinc-400 text-center mb-6 font-body">Start forging cuts in a couple of clicks.</p>
+
+      <GoogleButton />
+
+      <div className="flex items-center space-x-3 my-5">
+        <div className="flex-1 h-px bg-white/[0.08]" />
+        <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-600">or</span>
+        <div className="flex-1 h-px bg-white/[0.08]" />
+      </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
         <div>

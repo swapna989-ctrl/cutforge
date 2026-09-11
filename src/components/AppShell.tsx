@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import { useAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
 
@@ -15,6 +16,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   function handleLogout() {
     logout();
+    signOut({ redirect: false });
     router.push("/login");
   }
 
