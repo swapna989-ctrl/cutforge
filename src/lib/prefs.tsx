@@ -3,18 +3,14 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Ratio } from "@/lib/pipeline";
 
-export type ColorGrade = "Cinematic Warm" | "Natural" | "High Contrast" | "Black & White";
-
 export type Prefs = {
   defaultRatio: Ratio;
-  colorGrade: ColorGrade;
   autoCaptions: boolean;
   beatSync: boolean;
 };
 
 const DEFAULT_PREFS: Prefs = {
   defaultRatio: "9:16",
-  colorGrade: "Cinematic Warm",
   autoCaptions: true,
   beatSync: true,
 };

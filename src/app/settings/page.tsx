@@ -5,10 +5,8 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import Switch from "@/components/Switch";
 import { useRequireAuth } from "@/lib/auth";
-import { usePrefs, type ColorGrade } from "@/lib/prefs";
+import { usePrefs } from "@/lib/prefs";
 import type { Ratio } from "@/lib/pipeline";
-
-const COLOR_GRADES: ColorGrade[] = ["Cinematic Warm", "Natural", "High Contrast", "Black & White"];
 
 function SectionCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
@@ -43,7 +41,6 @@ export default function SettingsPage() {
   const [profileState, setProfileState] = useState<"idle" | "saving" | "saved">("idle");
 
   const [ratio, setRatio] = useState<Ratio>(prefs.defaultRatio);
-  const [colorGrade, setColorGrade] = useState<ColorGrade>(prefs.colorGrade);
   const [autoCaptions, setAutoCaptions] = useState(prefs.autoCaptions);
   const [beatSync, setBeatSync] = useState(prefs.beatSync);
   const [prefsState, setPrefsState] = useState<"idle" | "saving" | "saved">("idle");
@@ -61,7 +58,6 @@ export default function SettingsPage() {
     // Seeds the form once the async-loaded prefs arrive (see src/lib/prefs.tsx).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRatio(prefs.defaultRatio);
-    setColorGrade(prefs.colorGrade);
     setAutoCaptions(prefs.autoCaptions);
     setBeatSync(prefs.beatSync);
   }, [prefs]);
@@ -82,7 +78,7 @@ export default function SettingsPage() {
     e.preventDefault();
     setPrefsState("saving");
     window.setTimeout(() => {
-      updatePrefs({ defaultRatio: ratio, colorGrade, autoCaptions, beatSync });
+      updatePrefs({ defaultRatio: ratio, autoCaptions, beatSync });
       setPrefsState("saved");
       window.setTimeout(() => setPrefsState("idle"), 1800);
     }, 500);
@@ -167,21 +163,6 @@ export default function SettingsPage() {
                   </button>
                 ))}
               </div>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-2">Color grade</label>
-              <select
-                value={colorGrade}
-                onChange={(e) => setColorGrade(e.target.value as ColorGrade)}
-                className="w-full bg-[#0b0b0e] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:border-amber-300/40 outline-none transition-colors cursor-pointer"
-              >
-                {COLOR_GRADES.map((g) => (
-                  <option key={g} value={g}>
-                    {g}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <div className="space-y-1 border-t border-white/[0.06] pt-4">
