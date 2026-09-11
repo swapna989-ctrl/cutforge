@@ -7,14 +7,14 @@ import { useBilling, type Plan } from "@/lib/billing";
 
 const CREDIT_PACKS = [
   { credits: 10, price: 149 },
-  { credits: 30, price: 399, badge: "Best value per credit" },
-  { credits: 100, price: 999 },
+  { credits: 30, price: 349 },
+  { credits: 100, price: 899, badge: "Best value per credit" },
 ];
 
 const SUBSCRIPTIONS: { plan: Plan; label: string; price: string; cadence: string; badge?: string }[] = [
   { plan: "weekly", label: "Weekly", price: "₹149", cadence: "/ week" },
-  { plan: "monthly", label: "Monthly", price: "₹299", cadence: "/ month", badge: "Most popular" },
-  { plan: "yearly", label: "Yearly", price: "₹2,499", cadence: "/ year", badge: "Best value" },
+  { plan: "monthly", label: "Monthly", price: "₹399", cadence: "/ month", badge: "Most popular" },
+  { plan: "yearly", label: "Yearly", price: "₹3,499", cadence: "/ year", badge: "Best value" },
 ];
 
 const PLAN_LABEL: Record<Plan, string> = { none: "No active plan", weekly: "Weekly plan", monthly: "Monthly plan", yearly: "Yearly plan" };
