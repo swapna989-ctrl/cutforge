@@ -8,9 +8,11 @@ import ExportCard from "@/components/ExportCard";
 import { SYNTH_STEPS, stepsCompletedAt, type PipelineStatus, type Ratio } from "@/lib/pipeline";
 import type { Project } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
+import { useBilling } from "@/lib/billing";
 
 export default function WorkspaceView({ initialProject }: { initialProject?: Project }) {
   const { prefs, ready: prefsReady } = usePrefs();
+  const billing = useBilling();
 
   const [ratio, setRatio] = useState<Ratio>(initialProject?.ratio ?? "9:16");
 
@@ -85,8 +87,12 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   }
 
   function handleDownload() {
+    if (!billing.canExport) return;
     setDownloadState("preparing");
-    window.setTimeout(() => setDownloadState("done"), 900);
+    window.setTimeout(() => {
+      billing.consumeExportCredit();
+      setDownloadState("done");
+    }, 900);
     window.setTimeout(() => setDownloadState("idle"), 2600);
   }
 

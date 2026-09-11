@@ -3,11 +3,15 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { useBilling } from "@/lib/billing";
+
+const PLAN_LABEL = { weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" } as const;
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const billing = useBilling();
 
   function handleLogout() {
     logout();
@@ -46,10 +50,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="hidden md:flex items-center space-x-1 text-xs font-medium font-mono">
           {navLink("/dashboard", "Dashboard")}
           {navLink("/workspace", "New Project")}
+          {navLink("/pricing", "Pricing")}
           {navLink("/settings", "Settings")}
         </nav>
 
         <div className="flex items-center space-x-3">
+          {billing.ready && (
+            <Link
+              href="/pricing"
+              className="flex items-center space-x-1.5 text-[11px] font-mono px-3 py-1.5 rounded-full border border-amber-400/20 bg-amber-400/[0.06] text-amber-200/90 hover:bg-amber-400/[0.12] hover:border-amber-400/30 transition-all whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[14px]">bolt</span>
+              <span>{billing.hasActivePlan ? `${PLAN_LABEL[billing.plan as keyof typeof PLAN_LABEL]} Plan` : `${billing.freeCredits + billing.paidCredits} credits`}</span>
+            </Link>
+          )}
           {user && <span className="hidden sm:inline-block text-[11px] font-mono text-zinc-400 truncate max-w-[140px]">{user.email}</span>}
           <button
             onClick={handleLogout}

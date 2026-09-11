@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, Inter, JetBrains_Mono } from "next/font/google";
 import { AuthProvider } from "@/lib/auth";
 import { PrefsProvider } from "@/lib/prefs";
+import { BillingProvider } from "@/lib/billing";
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -43,7 +44,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           rel="stylesheet"
         />
         <AuthProvider>
-          <PrefsProvider>{children}</PrefsProvider>
+          <PrefsProvider>
+            <BillingProvider>{children}</BillingProvider>
+          </PrefsProvider>
         </AuthProvider>
       </body>
     </html>

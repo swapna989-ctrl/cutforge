@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import type { PipelineStatus, Ratio } from "@/lib/pipeline";
+import { useBilling } from "@/lib/billing";
 
 export default function ExportCard({
   ratio,
@@ -20,6 +22,8 @@ export default function ExportCard({
   onDownload: () => void;
 }) {
   const isReady = status === "ready";
+  const billing = useBilling();
+  const showWatermark = isReady && !billing.isWatermarkFree;
 
   const badge = isReady
     ? { text: "Mastered", cls: "bg-amber-400/10 border-amber-400/20 text-amber-200" }
@@ -94,6 +98,12 @@ export default function ExportCard({
               </div>
             )}
 
+            {showWatermark && (
+              <span className="absolute bottom-9 right-2.5 z-10 px-1.5 py-0.5 rounded bg-black/50 border border-white/10 text-white/70 font-mono text-[8px] tracking-widest uppercase">
+                CutForge
+              </span>
+            )}
+
             <div className="w-full flex justify-between items-center font-mono text-[10px] text-zinc-400 z-10">
               <span>3840 × 2160</span>
               <span className="text-amber-200/80">48kHz 24-BIT</span>
@@ -102,32 +112,64 @@ export default function ExportCard({
         </div>
       </div>
 
-      <div className="pt-4 border-t border-white/[0.06] flex items-center space-x-3">
-        <button
-          disabled={!isReady}
-          onClick={onReEdit}
-          className={`cf-pill-secondary px-4 py-2.5 rounded-full text-xs font-medium border transition-all ${
-            isReady
-              ? "text-zinc-400 hover:text-white border-white/10 hover:border-white/20 bg-white/[0.04] cursor-pointer"
-              : "text-zinc-600 border-white/[0.06] bg-white/[0.02] cursor-not-allowed"
-          }`}
-        >
-          Re-edit
-        </button>
-        <button
-          disabled={!isReady}
-          onClick={onDownload}
-          className={`cf-pill-main flex-1 py-2.5 px-5 rounded-full text-xs font-bold transition-all duration-300 flex items-center justify-center space-x-2 group/btn ${
-            isReady
-              ? "bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg cursor-pointer"
-              : "bg-white/10 text-white/30 cursor-not-allowed shadow-none"
-          }`}
-        >
-          <span>{downloadState === "preparing" ? "Preparing…" : downloadState === "done" ? "Downloaded ✓" : "Download Master"}</span>
-          {downloadState === "idle" && (
-            <span className="material-symbols-outlined text-[15px] group-hover/btn:translate-x-1 transition-transform">arrow_forward</span>
+      <div className="pt-4 border-t border-white/[0.06]">
+        <div className="flex items-center space-x-3">
+          <button
+            disabled={!isReady}
+            onClick={onReEdit}
+            className={`cf-pill-secondary px-4 py-2.5 rounded-full text-xs font-medium border transition-all ${
+              isReady
+                ? "text-zinc-400 hover:text-white border-white/10 hover:border-white/20 bg-white/[0.04] cursor-pointer"
+                : "text-zinc-600 border-white/[0.06] bg-white/[0.02] cursor-not-allowed"
+            }`}
+          >
+            Re-edit
+          </button>
+
+          {isReady && !billing.canExport ? (
+            <Link
+              href="/pricing"
+              className="cf-pill-main flex-1 py-2.5 px-5 rounded-full text-xs font-bold transition-all duration-300 flex items-center justify-center space-x-2 group/btn bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[15px]">bolt</span>
+              <span>Upgrade to export</span>
+            </Link>
+          ) : (
+            <button
+              disabled={!isReady}
+              onClick={onDownload}
+              className={`cf-pill-main flex-1 py-2.5 px-5 rounded-full text-xs font-bold transition-all duration-300 flex items-center justify-center space-x-2 group/btn ${
+                isReady
+                  ? "bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg cursor-pointer"
+                  : "bg-white/10 text-white/30 cursor-not-allowed shadow-none"
+              }`}
+            >
+              <span>{downloadState === "preparing" ? "Preparing…" : downloadState === "done" ? "Downloaded ✓" : "Download Master"}</span>
+              {downloadState === "idle" && (
+                <span className="material-symbols-outlined text-[15px] group-hover/btn:translate-x-1 transition-transform">arrow_forward</span>
+              )}
+            </button>
           )}
-        </button>
+        </div>
+
+        {isReady && billing.canExport && (
+          <p className="text-center text-[10px] font-mono text-zinc-500 mt-2.5">
+            {billing.isWatermarkFree ? (
+              billing.hasActivePlan ? (
+                "No watermark · unlimited exports on your plan"
+              ) : (
+                `No watermark · ${billing.paidCredits} paid credit${billing.paidCredits === 1 ? "" : "s"} left`
+              )
+            ) : (
+              <>
+                Includes CutForge watermark ({billing.freeCredits} free export{billing.freeCredits === 1 ? "" : "s"} left) ·{" "}
+                <Link href="/pricing" className="text-amber-200/90 hover:text-amber-200 underline underline-offset-2">
+                  Remove it
+                </Link>
+              </>
+            )}
+          </p>
+        )}
       </div>
     </article>
   );
