@@ -23,12 +23,39 @@ export default function PricingPage() {
   const { ready, user } = useRequireAuth();
   const billing = useBilling();
   const [purchased, setPurchased] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (!ready || !user) return null;
 
   function flash(key: string) {
     setPurchased(key);
     window.setTimeout(() => setPurchased((p) => (p === key ? null : p)), 1800);
+  }
+
+  async function handleBuyPack(key: string, amount: number) {
+    setActionError(null);
+    const { error } = await billing.buyCreditPack(amount);
+    if (error) {
+      setActionError(error);
+      return;
+    }
+    flash(key);
+  }
+
+  async function handleSubscribe(plan: Plan) {
+    setActionError(null);
+    const { error } = await billing.subscribe(plan);
+    if (error) {
+      setActionError(error);
+      return;
+    }
+    flash(plan);
+  }
+
+  async function handleCancelPlan() {
+    setActionError(null);
+    const { error } = await billing.cancelPlan();
+    if (error) setActionError(error);
   }
 
   return (
@@ -55,11 +82,13 @@ export default function PricingPage() {
           Plan: <span className="text-amber-200 font-semibold">{PLAN_LABEL[billing.plan]}</span>
         </span>
         {billing.hasActivePlan && (
-          <button onClick={billing.cancelPlan} className="text-xs text-zinc-500 hover:text-red-400 underline underline-offset-2 cursor-pointer">
+          <button onClick={handleCancelPlan} className="text-xs text-zinc-500 hover:text-red-400 underline underline-offset-2 cursor-pointer">
             Cancel plan
           </button>
         )}
       </div>
+
+      {actionError && <p className="text-center text-xs text-red-400 mb-8 max-w-2xl mx-auto">{actionError}</p>}
 
       <section className="mb-14">
         <h2 className="font-display text-xl font-semibold text-white mb-1 text-center">Credit packs</h2>
@@ -80,10 +109,7 @@ export default function PricingPage() {
                 <span className="text-xs text-zinc-500 font-mono uppercase tracking-wide mb-4">credits</span>
                 <span className="text-2xl font-display font-semibold text-amber-200 mb-5">₹{pack.price}</span>
                 <button
-                  onClick={() => {
-                    billing.buyCreditPack(pack.credits);
-                    flash(key);
-                  }}
+                  onClick={() => handleBuyPack(key, pack.credits)}
                   className="mt-auto py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 cursor-pointer"
                 >
                   {purchased === key ? "Added ✓" : "Buy now (demo)"}
@@ -133,10 +159,7 @@ export default function PricingPage() {
                 </ul>
                 <button
                   disabled={isCurrent}
-                  onClick={() => {
-                    billing.subscribe(sub.plan);
-                    flash(sub.plan);
-                  }}
+                  onClick={() => handleSubscribe(sub.plan)}
                   className={`mt-auto py-2.5 rounded-full text-xs font-bold transition-all duration-300 ${
                     isCurrent
                       ? "bg-white/[0.06] text-zinc-500 cursor-not-allowed"

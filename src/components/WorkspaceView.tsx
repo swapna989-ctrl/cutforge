@@ -145,15 +145,22 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       : `Includes CutForge watermark (${billing.freeCredits - 1} free export${billing.freeCredits - 1 === 1 ? "" : "s"} left)`;
 
     setDownloadState("preparing");
-    window.setTimeout(() => {
-      billing.consumeExportCredit();
+    window.setTimeout(async () => {
+      // Server-enforced — this can genuinely fail (e.g. another tab spent the last credit in
+      // the gap between the canExport check above and now), not just a local state update.
+      const { error } = await billing.consumeExportCredit();
+      if (error) {
+        setDownloadState("idle");
+        downloadInFlightRef.current = false;
+        return;
+      }
       setExportSnapshot({ watermarkFree, label });
       setDownloadState("done");
+      window.setTimeout(() => {
+        setDownloadState("idle");
+        downloadInFlightRef.current = false;
+      }, 1700);
     }, 900);
-    window.setTimeout(() => {
-      setDownloadState("idle");
-      downloadInFlightRef.current = false;
-    }, 2600);
   }
 
   function handlePlay() {

@@ -46,6 +46,7 @@ export default function SettingsPage() {
   const [profileState, setProfileState] = useState<"idle" | "saving" | "saved">("idle");
   const [profileError, setProfileError] = useState<string | null>(null);
   const [emailChangePending, setEmailChangePending] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
 
   const [ratio, setRatio] = useState<Ratio>(prefs.defaultRatio);
   const [autoCaptions, setAutoCaptions] = useState(prefs.autoCaptions);
@@ -87,6 +88,12 @@ export default function SettingsPage() {
     setProfileState("saved");
     if (pending) setEmailChangePending(true);
     window.setTimeout(() => setProfileState("idle"), 1800);
+  }
+
+  async function handleCancelPlan() {
+    setPlanError(null);
+    const { error } = await billing.cancelPlan();
+    if (error) setPlanError(error);
   }
 
   function handlePrefsSubmit(e: React.FormEvent) {
@@ -230,13 +237,14 @@ export default function SettingsPage() {
             </Link>
             {billing.hasActivePlan && (
               <button
-                onClick={billing.cancelPlan}
+                onClick={handleCancelPlan}
                 className="text-xs text-zinc-500 hover:text-red-400 underline underline-offset-2 cursor-pointer whitespace-nowrap"
               >
                 Cancel plan
               </button>
             )}
           </div>
+          {planError && <p className="text-xs text-red-400 mt-2">{planError}</p>}
         </SectionCard>
       </div>
     </AppShell>
