@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
 import { useAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
 
@@ -14,9 +13,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const billing = useBilling();
 
-  function handleLogout() {
-    logout();
-    signOut({ redirect: false });
+  async function handleLogout() {
+    await logout();
     router.push("/login");
   }
 

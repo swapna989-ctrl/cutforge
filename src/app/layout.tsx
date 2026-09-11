@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, Inter, JetBrains_Mono } from "next/font/google";
-import { SessionProvider } from "next-auth/react";
 import { AuthProvider } from "@/lib/auth";
 import { PrefsProvider } from "@/lib/prefs";
 import { BillingProvider } from "@/lib/billing";
-import GoogleAuthBridge from "@/components/GoogleAuthBridge";
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -45,16 +43,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
           rel="stylesheet"
         />
-        <SessionProvider>
-          <AuthProvider>
-            <PrefsProvider>
-              <BillingProvider>
-                <GoogleAuthBridge />
-                {children}
-              </BillingProvider>
-            </PrefsProvider>
-          </AuthProvider>
-        </SessionProvider>
+        <AuthProvider>
+          <PrefsProvider>
+            <BillingProvider>{children}</BillingProvider>
+          </PrefsProvider>
+        </AuthProvider>
       </body>
     </html>
   );

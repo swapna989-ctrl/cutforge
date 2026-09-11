@@ -15,19 +15,49 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmEmailSent, setConfirmEmailSent] = useState(false);
 
   useEffect(() => {
     if (auth.ready && auth.user) router.replace("/dashboard");
   }, [auth.ready, auth.user, router]);
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!email || !password) return;
+    setError(null);
     setSubmitting(true);
-    window.setTimeout(() => {
-      auth.login(email, name);
-      router.push("/dashboard");
-    }, 600);
+    const { error: signUpError, needsEmailConfirmation } = await auth.signUpWithPassword(email, password, name);
+    setSubmitting(false);
+    if (signUpError) {
+      setError(signUpError);
+      return;
+    }
+    if (needsEmailConfirmation) {
+      setConfirmEmailSent(true);
+      return;
+    }
+    router.push("/dashboard");
+  }
+
+  if (confirmEmailSent) {
+    return (
+      <AuthShell>
+        <div className="text-center">
+          <span className="material-symbols-outlined text-amber-200 text-3xl mb-3 inline-block">mark_email_unread</span>
+          <h1 className="font-display text-2xl font-semibold text-white mb-1">Check your email</h1>
+          <p className="text-xs text-zinc-400 font-body">
+            We sent a confirmation link to <span className="text-zinc-200">{email}</span>. Confirm your address, then come back and sign in.
+          </p>
+          <Link
+            href="/login"
+            className="inline-block mt-6 text-xs font-medium text-amber-200/90 hover:text-amber-200 underline underline-offset-2"
+          >
+            Back to sign in
+          </Link>
+        </div>
+      </AuthShell>
+    );
   }
 
   return (
@@ -70,6 +100,8 @@ export default function SignupPage() {
           <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Password</label>
           <PasswordInput value={password} onChange={setPassword} placeholder="••••••••" required />
         </div>
+
+        {error && <p className="text-xs text-red-400">{error}</p>}
 
         <button
           type="submit"

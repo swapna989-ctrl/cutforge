@@ -2,57 +2,96 @@
 
 import { useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
 
-type AuthUser = { name: string; email: string };
-type AuthState = { user: AuthUser | null; ready: boolean };
+export type AuthUser = { id: string; email: string; name: string };
 
-const STORAGE_KEY = "cutforge_auth";
-
-const AuthContext = createContext<{
+type AuthContextValue = {
   user: AuthUser | null;
   ready: boolean;
-  login: (email: string, name?: string) => void;
-  logout: () => void;
-  updateProfile: (patch: Partial<AuthUser>) => void;
-} | null>(null);
+  signInWithPassword: (email: string, password: string) => Promise<{ error: string | null }>;
+  signUpWithPassword: (email: string, password: string, name: string) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
+  signInWithGoogle: () => Promise<{ error: string | null }>;
+  logout: () => Promise<void>;
+  updateProfile: (patch: { name?: string; email?: string }) => Promise<{ error: string | null; emailChangePending?: boolean }>;
+};
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+function mapUser(u: SupabaseUser | null | undefined): AuthUser | null {
+  if (!u) return null;
+  const name = (u.user_metadata?.full_name as string | undefined) || u.email?.split("@")[0] || "there";
+  return { id: u.id, email: u.email ?? "", name };
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AuthState>({ user: null, ready: false });
+  const [state, setState] = useState<{ user: AuthUser | null; ready: boolean }>({ user: null, ready: false });
 
   useEffect(() => {
-    // Deferred to an effect (not a lazy useState initializer) so the first client render
-    // matches the server-rendered markup before we read browser-only localStorage.
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setState({ user: raw ? (JSON.parse(raw) as AuthUser) : null, ready: true });
-    } catch {
-      setState({ user: null, ready: true });
-    }
+    const supabase = createClient();
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setState({ user: mapUser(session?.user), ready: true });
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setState({ user: mapUser(session?.user), ready: true });
+    });
+
+    return () => listener.subscription.unsubscribe();
   }, []);
 
-  function login(email: string, name?: string) {
-    const user: AuthUser = { email, name: name?.trim() || email.split("@")[0] };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    setState({ user, ready: true });
+  async function signInWithPassword(email: string, password: string) {
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return { error: error?.message ?? null };
   }
 
-  function logout() {
-    window.localStorage.removeItem(STORAGE_KEY);
-    setState({ user: null, ready: true });
+  async function signUpWithPassword(email: string, password: string, name: string) {
+    const supabase = createClient();
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
+    if (error) return { error: error.message, needsEmailConfirmation: false };
+    return { error: null, needsEmailConfirmation: !data.session };
   }
 
-  function updateProfile(patch: Partial<AuthUser>) {
-    setState((prev) => {
-      if (!prev.user) return prev;
-      const user = { ...prev.user, ...patch };
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-      return { user, ready: true };
+  async function signInWithGoogle() {
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
+    return { error: error?.message ?? null };
+  }
+
+  async function logout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+  }
+
+  async function updateProfile(patch: { name?: string; email?: string }) {
+    const supabase = createClient();
+
+    if (patch.name !== undefined) {
+      const { error } = await supabase.auth.updateUser({ data: { full_name: patch.name } });
+      if (error) return { error: error.message };
+    }
+
+    if (patch.email !== undefined && patch.email !== state.user?.email) {
+      const { error } = await supabase.auth.updateUser({ email: patch.email });
+      if (error) return { error: error.message };
+      return { error: null, emailChangePending: true };
+    }
+
+    return { error: null };
   }
 
   return (
-    <AuthContext.Provider value={{ user: state.user, ready: state.ready, login, logout, updateProfile }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider
+      value={{ user: state.user, ready: state.ready, signInWithPassword, signUpWithPassword, signInWithGoogle, logout, updateProfile }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
 }
 

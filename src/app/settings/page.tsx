@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
 import AppShell from "@/components/AppShell";
 import Switch from "@/components/Switch";
 import { useRequireAuth } from "@/lib/auth";
@@ -40,6 +39,8 @@ export default function SettingsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [profileState, setProfileState] = useState<"idle" | "saving" | "saved">("idle");
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [emailChangePending, setEmailChangePending] = useState(false);
 
   const [ratio, setRatio] = useState<Ratio>(prefs.defaultRatio);
   const [autoCaptions, setAutoCaptions] = useState(prefs.autoCaptions);
@@ -65,14 +66,20 @@ export default function SettingsPage() {
 
   if (!ready || !user) return null;
 
-  function handleProfileSubmit(e: React.FormEvent) {
+  async function handleProfileSubmit(e: React.FormEvent) {
     e.preventDefault();
     setProfileState("saving");
-    window.setTimeout(() => {
-      updateProfile({ name, email });
-      setProfileState("saved");
-      window.setTimeout(() => setProfileState("idle"), 1800);
-    }, 500);
+    setProfileError(null);
+    setEmailChangePending(false);
+    const { error, emailChangePending: pending } = await updateProfile({ name, email });
+    if (error) {
+      setProfileState("idle");
+      setProfileError(error);
+      return;
+    }
+    setProfileState("saved");
+    if (pending) setEmailChangePending(true);
+    window.setTimeout(() => setProfileState("idle"), 1800);
   }
 
   function handlePrefsSubmit(e: React.FormEvent) {
@@ -85,9 +92,8 @@ export default function SettingsPage() {
     }, 500);
   }
 
-  function handleLogout() {
-    logout();
-    signOut({ redirect: false });
+  async function handleLogout() {
+    await logout();
     router.push("/login");
   }
 
@@ -122,6 +128,11 @@ export default function SettingsPage() {
                 className="w-full bg-[#0b0b0e] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:border-amber-300/40 outline-none transition-colors"
               />
             </div>
+            {profileError && <p className="text-xs text-red-400">{profileError}</p>}
+            {emailChangePending && (
+              <p className="text-xs text-amber-200/90">Check your new email address for a confirmation link to finish the change.</p>
+            )}
+
             <div className="pt-1">
               <SaveButton state={profileState} />
             </div>

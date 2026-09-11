@@ -14,19 +14,24 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (auth.ready && auth.user) router.replace("/dashboard");
   }, [auth.ready, auth.user, router]);
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!email || !password) return;
+    setError(null);
     setSubmitting(true);
-    window.setTimeout(() => {
-      auth.login(email);
-      router.push("/dashboard");
-    }, 600);
+    const { error: signInError } = await auth.signInWithPassword(email, password);
+    setSubmitting(false);
+    if (signInError) {
+      setError(signInError);
+      return;
+    }
+    router.push("/dashboard");
   }
 
   return (
@@ -58,6 +63,8 @@ export default function LoginPage() {
           <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Password</label>
           <PasswordInput value={password} onChange={setPassword} placeholder="••••••••" required />
         </div>
+
+        {error && <p className="text-xs text-red-400">{error}</p>}
 
         <button
           type="submit"
