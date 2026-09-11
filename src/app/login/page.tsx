@@ -60,7 +60,12 @@ export default function LoginPage() {
           />
         </div>
         <div>
-          <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Password</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500">Password</label>
+            <Link href="/forgot-password" className="text-[11px] text-amber-200/80 hover:text-amber-200 font-medium">
+              Forgot password?
+            </Link>
+          </div>
           <PasswordInput value={password} onChange={setPassword} placeholder="••••••••" required />
         </div>
 
