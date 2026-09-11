@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthShell from "@/components/AuthShell";
+import PasswordInput from "@/components/PasswordInput";
 import { useAuth } from "@/lib/auth";
 
 export default function SignupPage() {
@@ -58,14 +59,7 @@ export default function SignupPage() {
         </div>
         <div>
           <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Password</label>
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            className="w-full bg-[#0b0b0e] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-300/40 outline-none transition-colors"
-          />
+          <PasswordInput value={password} onChange={setPassword} placeholder="••••••••" required />
         </div>
 
         <button
