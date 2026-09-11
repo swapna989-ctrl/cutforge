@@ -33,30 +33,38 @@ export default function DashboardPage() {
           return (
             <Link
               key={project.id}
-              href={isReady ? `/workspace?load=${project.id}` : "/workspace"}
+              href={`/workspace?load=${project.id}`}
               className="cf-card bg-[#121216]/90 border border-white/[0.08] hover:border-amber-300/30 rounded-2xl p-5 flex flex-col transition-all duration-300 group"
             >
               <div
-                className={`w-full rounded-xl bg-[#0b0b0e] border border-white/10 flex items-center justify-center mb-4 relative overflow-hidden ${
+                className={`w-full rounded-xl bg-[#0b0b0e] border border-white/10 flex flex-col items-center justify-center mb-4 relative overflow-hidden ${
                   project.ratio === "9:16" ? "aspect-[9/16] max-h-40 mx-auto w-auto" : "aspect-video"
                 }`}
               >
                 <span className="material-symbols-outlined text-zinc-700 text-3xl group-hover:text-amber-300/60 transition-colors">
-                  {isReady ? "play_circle" : "hourglass_top"}
+                  {isReady ? "play_circle" : "edit_note"}
+                </span>
+                <span className="text-[10px] font-mono text-zinc-600 group-hover:text-amber-200/70 transition-colors mt-1">
+                  {isReady ? "Open" : "Resume editing"}
                 </span>
                 <span className="absolute top-2 left-2 text-[9px] font-mono px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-zinc-300">
                   {project.ratio}
                 </span>
+                {!isReady && (
+                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
+                    <div className="h-full bg-gradient-to-r from-amber-300 to-amber-500" style={{ width: `${project.progress}%` }} />
+                  </div>
+                )}
               </div>
 
               <div className="flex items-start justify-between gap-2 mb-1.5">
                 <span className="text-sm font-medium text-white truncate">{project.name}</span>
                 <span
                   className={`shrink-0 px-2 py-0.5 rounded-full border font-mono text-[9px] tracking-widest font-semibold uppercase ${
-                    isReady ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-white/[0.06] border-white/10 text-zinc-400"
+                    isReady ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-amber-400/10 border-amber-400/30 text-amber-300"
                   }`}
                 >
-                  {isReady ? "Ready" : "Draft"}
+                  {isReady ? "Ready" : `Draft • ${project.progress}%`}
                 </span>
               </div>
               <div className="flex items-center space-x-2 text-[11px] font-mono text-zinc-500">

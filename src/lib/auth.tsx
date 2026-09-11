@@ -13,6 +13,7 @@ const AuthContext = createContext<{
   ready: boolean;
   login: (email: string, name?: string) => void;
   logout: () => void;
+  updateProfile: (patch: Partial<AuthUser>) => void;
 } | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -41,7 +42,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({ user: null, ready: true });
   }
 
-  return <AuthContext.Provider value={{ user: state.user, ready: state.ready, login, logout }}>{children}</AuthContext.Provider>;
+  function updateProfile(patch: Partial<AuthUser>) {
+    setState((prev) => {
+      if (!prev.user) return prev;
+      const user = { ...prev.user, ...patch };
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+      return { user, ready: true };
+    });
+  }
+
+  return (
+    <AuthContext.Provider value={{ user: state.user, ready: state.ready, login, logout, updateProfile }}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

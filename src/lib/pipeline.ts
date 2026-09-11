@@ -13,3 +13,8 @@ export const SYNTH_STEPS: { at: number; msg: string }[] = [
 ];
 
 export const TOTAL_SHOTS = 24;
+
+/** How many SYNTH_STEPS log lines should already be showing at a given progress percentage. */
+export function stepsCompletedAt(progress: number): number {
+  return SYNTH_STEPS.filter((s) => s.at <= progress).length;
+}

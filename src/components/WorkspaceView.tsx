@@ -5,20 +5,33 @@ import Link from "next/link";
 import IngestCard from "@/components/IngestCard";
 import SynthesisCard from "@/components/SynthesisCard";
 import ExportCard from "@/components/ExportCard";
-import { SYNTH_STEPS, type PipelineStatus, type Ratio } from "@/lib/pipeline";
+import { SYNTH_STEPS, stepsCompletedAt, type PipelineStatus, type Ratio } from "@/lib/pipeline";
 import type { Project } from "@/lib/projects";
+import { usePrefs } from "@/lib/prefs";
 
 export default function WorkspaceView({ initialProject }: { initialProject?: Project }) {
+  const { prefs, ready: prefsReady } = usePrefs();
+
   const [ratio, setRatio] = useState<Ratio>(initialProject?.ratio ?? "9:16");
 
-  const [status, setStatus] = useState<PipelineStatus>(initialProject ? "ready" : "idle");
+  const [status, setStatus] = useState<PipelineStatus>(initialProject?.pipelineStatus ?? "idle");
   const [fileName, setFileName] = useState<string | null>(initialProject?.name ?? null);
-  const [progress, setProgress] = useState(initialProject ? 100 : 0);
-  const [log, setLog] = useState<string[]>(initialProject ? SYNTH_STEPS.map((s) => s.msg) : []);
-  const loggedCountRef = useRef(initialProject ? SYNTH_STEPS.length : 0);
+  const [progress, setProgress] = useState(initialProject?.progress ?? 0);
+  const initialDoneCount = initialProject ? stepsCompletedAt(initialProject.progress) : 0;
+  const [log, setLog] = useState<string[]>(SYNTH_STEPS.slice(0, initialDoneCount).map((s) => s.msg));
+  const loggedCountRef = useRef(initialDoneCount);
 
   const [playing, setPlaying] = useState(false);
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "done">("idle");
+
+  // Pick up the user's saved default ratio for brand-new (non-resumed) projects, once prefs load.
+  useEffect(() => {
+    if (!initialProject && prefsReady) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRatio(prefs.defaultRatio);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to prefs becoming ready, not every prefs change
+  }, [prefsReady]);
 
   // Drive the synthesis progress simulation.
   useEffect(() => {
@@ -62,7 +75,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   }
 
   function handleReEdit() {
-    const doneCount = SYNTH_STEPS.filter((s) => s.at <= 55).length;
+    const doneCount = stepsCompletedAt(55);
     loggedCountRef.current = doneCount;
     setLog([...SYNTH_STEPS.slice(0, doneCount).map((s) => s.msg), "Restoring timeline for another pass — reapplying beat sync…"]);
     setProgress(55);

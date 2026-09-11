@@ -46,6 +46,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="hidden md:flex items-center space-x-1 text-xs font-medium font-mono">
           {navLink("/dashboard", "Dashboard")}
           {navLink("/workspace", "New Project")}
+          {navLink("/settings", "Settings")}
         </nav>
 
         <div className="flex items-center space-x-3">
