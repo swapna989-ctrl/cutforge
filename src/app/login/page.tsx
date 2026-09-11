@@ -1,91 +1,10 @@
-"use client";
-
-import { useEffect, useState, type FormEvent } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import AuthShell from "@/components/AuthShell";
-import PasswordInput from "@/components/PasswordInput";
-import GoogleButton from "@/components/GoogleButton";
-import { useAuth } from "@/lib/auth";
+import { Suspense } from "react";
+import LoginForm from "@/components/LoginForm";
 
 export default function LoginPage() {
-  const auth = useAuth();
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (auth.ready && auth.user) router.replace("/dashboard");
-  }, [auth.ready, auth.user, router]);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!email || !password) return;
-    setError(null);
-    setSubmitting(true);
-    const { error: signInError } = await auth.signInWithPassword(email, password);
-    setSubmitting(false);
-    if (signInError) {
-      setError(signInError);
-      return;
-    }
-    router.push("/dashboard");
-  }
-
   return (
-    <AuthShell>
-      <h1 className="font-display text-2xl font-semibold text-white text-center mb-1">Welcome back</h1>
-      <p className="text-xs text-zinc-400 text-center mb-6 font-body">Sign in to pick up where you left off.</p>
-
-      <GoogleButton />
-
-      <div className="flex items-center space-x-3 my-5">
-        <div className="flex-1 h-px bg-white/[0.08]" />
-        <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-600">or</span>
-        <div className="flex-1 h-px bg-white/[0.08]" />
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <div>
-          <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Email</label>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@studio.com"
-            className="w-full bg-[#0b0b0e] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-300/40 outline-none transition-colors"
-          />
-        </div>
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500">Password</label>
-            <Link href="/forgot-password" className="text-[11px] text-amber-200/80 hover:text-amber-200 font-medium">
-              Forgot password?
-            </Link>
-          </div>
-          <PasswordInput value={password} onChange={setPassword} placeholder="••••••••" required />
-        </div>
-
-        {error && <p className="text-xs text-red-400">{error}</p>}
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="cf-pill-main w-full mt-2 py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-        >
-          {submitting ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
-
-      <p className="text-xs text-zinc-500 text-center mt-6 font-body">
-        Don&apos;t have an account?{" "}
-        <Link href="/signup" className="text-amber-200/90 hover:text-amber-200 font-medium">
-          Create one
-        </Link>
-      </p>
-    </AuthShell>
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

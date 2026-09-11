@@ -2,21 +2,21 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AuthShell from "@/components/AuthShell";
 import PasswordInput from "@/components/PasswordInput";
 import GoogleButton from "@/components/GoogleButton";
 import { useAuth } from "@/lib/auth";
 
-export default function SignupPage() {
+export default function LoginForm() {
   const auth = useAuth();
   const router = useRouter();
-  const [name, setName] = useState("");
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmEmailSent, setConfirmEmailSent] = useState(false);
+  // Seeded from ?error=... when /auth/callback bounces back a failed OAuth or link confirmation.
+  const [error, setError] = useState<string | null>(() => searchParams.get("error"));
 
   useEffect(() => {
     if (auth.ready && auth.user) router.replace("/dashboard");
@@ -27,43 +27,19 @@ export default function SignupPage() {
     if (!email || !password) return;
     setError(null);
     setSubmitting(true);
-    const { error: signUpError, needsEmailConfirmation } = await auth.signUpWithPassword(email, password, name);
+    const { error: signInError } = await auth.signInWithPassword(email, password);
     setSubmitting(false);
-    if (signUpError) {
-      setError(signUpError);
-      return;
-    }
-    if (needsEmailConfirmation) {
-      setConfirmEmailSent(true);
+    if (signInError) {
+      setError(signInError);
       return;
     }
     router.push("/dashboard");
   }
 
-  if (confirmEmailSent) {
-    return (
-      <AuthShell>
-        <div className="text-center">
-          <span className="material-symbols-outlined text-amber-200 text-3xl mb-3 inline-block">mark_email_unread</span>
-          <h1 className="font-display text-2xl font-semibold text-white mb-1">Check your email</h1>
-          <p className="text-xs text-zinc-400 font-body">
-            We sent a confirmation link to <span className="text-zinc-200">{email}</span>. Confirm your address, then come back and sign in.
-          </p>
-          <Link
-            href="/login"
-            className="inline-block mt-6 text-xs font-medium text-amber-200/90 hover:text-amber-200 underline underline-offset-2"
-          >
-            Back to sign in
-          </Link>
-        </div>
-      </AuthShell>
-    );
-  }
-
   return (
     <AuthShell>
-      <h1 className="font-display text-2xl font-semibold text-white text-center mb-1">Create your account</h1>
-      <p className="text-xs text-zinc-400 text-center mb-6 font-body">Start forging cuts in a couple of clicks.</p>
+      <h1 className="font-display text-2xl font-semibold text-white text-center mb-1">Welcome back</h1>
+      <p className="text-xs text-zinc-400 text-center mb-6 font-body">Sign in to pick up where you left off.</p>
 
       <GoogleButton />
 
@@ -74,17 +50,6 @@ export default function SignupPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
-        <div>
-          <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Name</label>
-          <input
-            type="text"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Alex Rivera"
-            className="w-full bg-[#0b0b0e] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-300/40 outline-none transition-colors"
-          />
-        </div>
         <div>
           <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Email</label>
           <input
@@ -97,7 +62,12 @@ export default function SignupPage() {
           />
         </div>
         <div>
-          <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Password</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500">Password</label>
+            <Link href="/forgot-password" className="text-[11px] text-amber-200/80 hover:text-amber-200 font-medium">
+              Forgot password?
+            </Link>
+          </div>
           <PasswordInput value={password} onChange={setPassword} placeholder="••••••••" required />
         </div>
 
@@ -108,14 +78,14 @@ export default function SignupPage() {
           disabled={submitting}
           className="w-full mt-2 py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
         >
-          {submitting ? "Creating account…" : "Create account"}
+          {submitting ? "Signing in…" : "Sign in"}
         </button>
       </form>
 
       <p className="text-xs text-zinc-500 text-center mt-6 font-body">
-        Already have an account?{" "}
-        <Link href="/login" className="text-amber-200/90 hover:text-amber-200 font-medium">
-          Sign in
+        Don&apos;t have an account?{" "}
+        <Link href="/signup" className="text-amber-200/90 hover:text-amber-200 font-medium">
+          Create one
         </Link>
       </p>
     </AuthShell>

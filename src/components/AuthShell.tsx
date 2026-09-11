@@ -10,7 +10,7 @@ export default function AuthShell({ children }: { children: React.ReactNode }) {
           <span className="block text-[11px] font-mono tracking-widest text-amber-200/70 mt-2 uppercase">Studio Access</span>
         </div>
 
-        <div className="cf-card bg-[#121216]/90 border border-white/[0.08] rounded-[28px] p-7 sm:p-8 shadow-cf-card relative overflow-hidden backdrop-blur-md">
+        <div className="bg-[#121216]/90 border border-white/[0.08] rounded-[28px] p-7 sm:p-8 shadow-cf-card relative overflow-hidden backdrop-blur-md">
           <div className="absolute top-0 left-12 right-12 h-[1px] bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
           {children}
         </div>

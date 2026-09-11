@@ -10,6 +10,8 @@ export type AuthUser = { id: string; email: string; name: string };
 type AuthContextValue = {
   user: AuthUser | null;
   ready: boolean;
+  /** True when the current session came from a password-recovery link, not a normal sign-in. */
+  isPasswordRecovery: boolean;
   signInWithPassword: (email: string, password: string) => Promise<{ error: string | null }>;
   signUpWithPassword: (email: string, password: string, name: string) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
@@ -28,17 +30,24 @@ function mapUser(u: SupabaseUser | null | undefined): AuthUser | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<{ user: AuthUser | null; ready: boolean }>({ user: null, ready: false });
+  const [state, setState] = useState<{ user: AuthUser | null; ready: boolean; isPasswordRecovery: boolean }>({
+    user: null,
+    ready: false,
+    isPasswordRecovery: false,
+  });
 
   useEffect(() => {
     const supabase = createClient();
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setState({ user: mapUser(session?.user), ready: true });
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setState({ user: mapUser(session?.user), ready: true });
+    // onAuthStateChange fires once immediately with the current session (as an "INITIAL_SESSION"
+    // event), so a separate getSession() call is redundant — worse, its promise can resolve after
+    // a later auth change and overwrite newer state with stale data.
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      setState((prev) => ({
+        user: mapUser(session?.user),
+        ready: true,
+        isPasswordRecovery: event === "PASSWORD_RECOVERY" ? true : event === "SIGNED_OUT" ? false : prev.isPasswordRecovery,
+      }));
     });
 
     return () => listener.subscription.unsubscribe();
@@ -111,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user: state.user,
         ready: state.ready,
+        isPasswordRecovery: state.isPasswordRecovery,
         signInWithPassword,
         signUpWithPassword,
         signInWithGoogle,

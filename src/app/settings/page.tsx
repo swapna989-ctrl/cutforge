@@ -2,15 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import Switch from "@/components/Switch";
 import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
+import { useBilling, type Plan } from "@/lib/billing";
 import type { Ratio } from "@/lib/pipeline";
+
+const PLAN_LABEL: Record<Plan, string> = { none: "Free Plan", weekly: "Weekly Plan", monthly: "Monthly Plan", yearly: "Yearly Plan" };
 
 function SectionCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
-    <section className="cf-card bg-[#121216]/90 border border-white/[0.08] rounded-[28px] p-6 sm:p-7 relative overflow-hidden">
+    <section className="bg-[#121216]/90 border border-white/[0.08] rounded-[28px] p-6 sm:p-7 relative overflow-hidden">
       <div className="absolute top-0 left-10 right-10 h-[1px] bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
       <h2 className="font-display text-lg font-semibold text-white mb-1">{title}</h2>
       <p className="text-xs text-zinc-400 font-body mb-5">{description}</p>
@@ -24,7 +28,7 @@ function SaveButton({ state }: { state: "idle" | "saving" | "saved" }) {
     <button
       type="submit"
       disabled={state === "saving"}
-      className="cf-pill-main px-5 py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
+      className="px-5 py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
     >
       {state === "saving" ? "Saving…" : state === "saved" ? "Saved ✓" : "Save changes"}
     </button>
@@ -34,6 +38,7 @@ function SaveButton({ state }: { state: "idle" | "saving" | "saved" }) {
 export default function SettingsPage() {
   const { ready, user, logout, updateProfile } = useRequireAuth();
   const { prefs, updatePrefs } = usePrefs();
+  const billing = useBilling();
   const router = useRouter();
 
   const [name, setName] = useState("");
@@ -48,7 +53,8 @@ export default function SettingsPage() {
   const [prefsState, setPrefsState] = useState<"idle" | "saving" | "saved">("idle");
 
   useEffect(() => {
-    // Seeds the form once the async-loaded auth user arrives (see src/lib/auth.tsx).
+    // Seeds the form once the real Supabase user arrives asynchronously — an external system,
+    // so this is the sanctioned "subscribe and sync local state" use of an effect.
     if (user) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(user.name);
@@ -57,7 +63,8 @@ export default function SettingsPage() {
   }, [user]);
 
   useEffect(() => {
-    // Seeds the form once the async-loaded prefs arrive (see src/lib/prefs.tsx).
+    // Seeds the form once prefs load (and again whenever they change from elsewhere, e.g. a
+    // different tab) — same rationale as the effect above.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRatio(prefs.defaultRatio);
     setAutoCaptions(prefs.autoCaptions);
@@ -189,35 +196,47 @@ export default function SettingsPage() {
           </form>
         </SectionCard>
 
-        <SectionCard title="Plan" description="Your current CutForge Studio plan.">
+        <SectionCard title="Plan" description="Your current CutForge Studio plan and credit balance.">
           <div className="rounded-xl border border-amber-300/20 bg-amber-400/[0.04] px-4 py-4 mb-4">
             <div className="flex items-center justify-between mb-3">
-              <span className="font-display text-base font-semibold text-white">Free Plan</span>
-              <span className="px-2 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20 text-amber-200 font-mono text-[9px] tracking-widest font-semibold uppercase">
-                Active
-              </span>
+              <span className="font-display text-base font-semibold text-white">{billing.ready ? PLAN_LABEL[billing.plan] : "Loading…"}</span>
+              {billing.hasActivePlan && (
+                <span className="px-2 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20 text-amber-200 font-mono text-[9px] tracking-widest font-semibold uppercase">
+                  Active
+                </span>
+              )}
             </div>
             <ul className="space-y-1.5 text-xs text-zinc-400 font-body">
               <li className="flex items-center space-x-2">
                 <span className="material-symbols-outlined text-[14px] text-emerald-400">check</span>
-                <span>Unlimited draft projects</span>
+                <span>{billing.freeCredits} free credit{billing.freeCredits === 1 ? "" : "s"} remaining</span>
               </li>
               <li className="flex items-center space-x-2">
                 <span className="material-symbols-outlined text-[14px] text-emerald-400">check</span>
-                <span>720p preview exports</span>
+                <span>{billing.paidCredits} paid credit{billing.paidCredits === 1 ? "" : "s"} remaining</span>
               </li>
               <li className="flex items-center space-x-2">
                 <span className="material-symbols-outlined text-[14px] text-emerald-400">check</span>
-                <span>Autonomous cut &amp; beat-sync engine</span>
+                <span>{billing.hasActivePlan ? "Unlimited watermark-free exports" : "Autonomous cut & beat-sync engine"}</span>
               </li>
             </ul>
           </div>
-          <button
-            disabled
-            className="w-full py-2.5 rounded-full text-xs font-semibold border border-white/10 bg-white/[0.03] text-zinc-500 cursor-not-allowed"
-          >
-            Upgrade to Studio Pro — Coming soon
-          </button>
+          <div className="flex items-center space-x-3">
+            <Link
+              href="/pricing"
+              className="flex-1 text-center py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300"
+            >
+              {billing.hasActivePlan ? "Manage plan" : "Buy credits or subscribe"}
+            </Link>
+            {billing.hasActivePlan && (
+              <button
+                onClick={billing.cancelPlan}
+                className="text-xs text-zinc-500 hover:text-red-400 underline underline-offset-2 cursor-pointer whitespace-nowrap"
+              >
+                Cancel plan
+              </button>
+            )}
+          </div>
         </SectionCard>
       </div>
     </AppShell>

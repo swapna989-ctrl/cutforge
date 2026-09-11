@@ -42,7 +42,7 @@ export default function PricingPage() {
         </p>
       </div>
 
-      <div className="cf-card bg-[#121216]/90 border border-white/[0.08] rounded-2xl px-6 py-4 mb-10 max-w-2xl mx-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm">
+      <div className="bg-[#121216]/90 border border-white/[0.08] rounded-2xl px-6 py-4 mb-10 max-w-2xl mx-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm">
         <span className="text-zinc-400">
           Free credits: <span className="text-white font-semibold">{billing.freeCredits}</span>
         </span>
@@ -70,7 +70,7 @@ export default function PricingPage() {
           {CREDIT_PACKS.map((pack) => {
             const key = `pack-${pack.credits}`;
             return (
-              <div key={key} className="cf-card bg-[#121216]/90 border border-white/[0.08] rounded-2xl p-6 flex flex-col text-center relative">
+              <div key={key} className="bg-[#121216]/90 border border-white/[0.08] rounded-2xl p-6 flex flex-col text-center relative">
                 {pack.badge && (
                   <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-300 font-mono text-[9px] tracking-widest font-semibold uppercase whitespace-nowrap">
                     {pack.badge}
@@ -84,7 +84,7 @@ export default function PricingPage() {
                     billing.buyCreditPack(pack.credits);
                     flash(key);
                   }}
-                  className="cf-pill-main mt-auto py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 cursor-pointer"
+                  className="mt-auto py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 cursor-pointer"
                 >
                   {purchased === key ? "Added ✓" : "Buy now (demo)"}
                 </button>
@@ -103,7 +103,7 @@ export default function PricingPage() {
             return (
               <div
                 key={sub.plan}
-                className={`cf-card bg-[#121216]/90 border rounded-2xl p-6 flex flex-col text-center relative ${
+                className={`bg-[#121216]/90 border rounded-2xl p-6 flex flex-col text-center relative ${
                   sub.badge === "Most popular" ? "border-amber-300/30" : "border-white/[0.08]"
                 }`}
               >
@@ -140,7 +140,7 @@ export default function PricingPage() {
                   className={`mt-auto py-2.5 rounded-full text-xs font-bold transition-all duration-300 ${
                     isCurrent
                       ? "bg-white/[0.06] text-zinc-500 cursor-not-allowed"
-                      : "cf-pill-main bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg cursor-pointer"
+                      : "bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg cursor-pointer"
                   }`}
                 >
                   {isCurrent ? "Current plan" : purchased === sub.plan ? "Subscribed ✓" : "Subscribe (demo)"}

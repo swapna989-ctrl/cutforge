@@ -30,7 +30,7 @@ export default function IngestCard({
       : { text: "Complete", cls: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" };
 
   return (
-    <article className="cf-card bg-[#121216]/90 border border-white/[0.08] hover:border-white/[0.15] rounded-[32px] p-7 sm:p-8 flex flex-col justify-between shadow-cf-card relative overflow-hidden backdrop-blur-md group transition-all duration-300">
+    <article className="bg-[#121216]/90 border border-white/[0.08] hover:border-white/[0.15] rounded-[32px] p-7 sm:p-8 flex flex-col justify-between shadow-cf-card relative overflow-hidden backdrop-blur-md group transition-all duration-300">
       <div className="absolute top-0 left-12 right-12 h-[1px] bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
 
       <div className="flex justify-between items-center pb-5 border-b border-white/[0.06]">
@@ -47,7 +47,7 @@ export default function IngestCard({
 
       <div className="my-6 flex flex-col items-center text-center">
         <h2 className="font-display text-2xl sm:text-3xl font-semibold tracking-tight text-white">Drop raw footage.</h2>
-        <p className="font-body text-xs sm:text-sm text-zinc-400 mt-2 max-w-xs font-light leading-relaxed theme-text-sub">
+        <p className="font-body text-xs sm:text-sm text-zinc-400 mt-2 max-w-xs font-light leading-relaxed">
           Drag in your raw clips and CutForge handles the rest — auto-syncing footage, checking color space, and prepping every frame for the cut.
         </p>
 

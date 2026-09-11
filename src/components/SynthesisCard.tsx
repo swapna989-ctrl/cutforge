@@ -43,7 +43,7 @@ export default function SynthesisCard({
   const shot = isWaiting ? 0 : Math.max(1, Math.round((progress / 100) * TOTAL_SHOTS));
 
   return (
-    <article className="cf-card bg-[#121216]/90 border border-white/[0.08] hover:border-white/[0.15] rounded-[32px] p-7 sm:p-8 flex flex-col justify-between shadow-cf-card relative overflow-hidden backdrop-blur-md group transition-all duration-300">
+    <article className="bg-[#121216]/90 border border-white/[0.08] hover:border-white/[0.15] rounded-[32px] p-7 sm:p-8 flex flex-col justify-between shadow-cf-card relative overflow-hidden backdrop-blur-md group transition-all duration-300">
       <div className="absolute top-0 left-12 right-12 h-[1px] bg-gradient-to-r from-transparent via-amber-200/35 to-transparent" />
 
       <div className="flex justify-between items-center pb-5 border-b border-white/[0.06]">
@@ -65,7 +65,7 @@ export default function SynthesisCard({
 
       <div className="my-6 flex flex-col items-center text-center">
         <h2 className="font-display text-2xl sm:text-3xl font-semibold tracking-tight text-white">Every cut &amp; beat.</h2>
-        <p className="font-body text-xs sm:text-sm text-zinc-400 mt-2 max-w-xs font-light leading-relaxed theme-text-sub">
+        <p className="font-body text-xs sm:text-sm text-zinc-400 mt-2 max-w-xs font-light leading-relaxed">
           The engine finds the story in your footage — trimming dead air, locking cuts to the beat, and grading color in real time.
         </p>
 
@@ -84,7 +84,9 @@ export default function SynthesisCard({
             <div className="w-full bg-[#131317] rounded-xl border border-white/[0.06] p-2.5">
               <div className="flex items-end justify-between h-10 gap-[2px]">
                 {bars.map((h, i) => {
-                  const barPct = (i / bars.length) * 100;
+                  // (i + 1), not i: makes the last bar light at 100% and keeps bar 0 unlit at 0%,
+                  // since each bar represents the slice of progress it completes, not where it starts.
+                  const barPct = ((i + 1) / bars.length) * 100;
                   const isPast = barPct <= progress;
                   return (
                     <div

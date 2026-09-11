@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useAuth } from "@/lib/auth";
 
 export type Plan = "none" | "weekly" | "monthly" | "yearly";
 
@@ -10,9 +11,20 @@ type BillingData = {
   plan: Plan;
 };
 
-const STORAGE_KEY = "cutforge_billing";
+const STORAGE_PREFIX = "cutforge_billing:";
 const FREE_TRIAL_CREDITS = 5;
 const DEFAULT_DATA: BillingData = { freeCredits: FREE_TRIAL_CREDITS, paidCredits: 0, plan: "none" };
+const VALID_PLANS: Plan[] = ["none", "weekly", "monthly", "yearly"];
+
+function sanitize(raw: unknown): BillingData {
+  if (!raw || typeof raw !== "object") return DEFAULT_DATA;
+  const r = raw as Partial<Record<keyof BillingData, unknown>>;
+  return {
+    freeCredits: typeof r.freeCredits === "number" && r.freeCredits >= 0 ? r.freeCredits : DEFAULT_DATA.freeCredits,
+    paidCredits: typeof r.paidCredits === "number" && r.paidCredits >= 0 ? r.paidCredits : DEFAULT_DATA.paidCredits,
+    plan: typeof r.plan === "string" && VALID_PLANS.includes(r.plan as Plan) ? (r.plan as Plan) : DEFAULT_DATA.plan,
+  };
+}
 
 type BillingContextValue = {
   freeCredits: number;
@@ -34,27 +46,39 @@ type BillingContextValue = {
 const BillingContext = createContext<BillingContextValue | null>(null);
 
 export function BillingProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<{ data: BillingData; ready: boolean }>({ data: DEFAULT_DATA, ready: false });
+  const { user, ready: authReady } = useAuth();
+  const [state, setState] = useState<{ data: BillingData; ready: boolean; userId: string | null }>({
+    data: DEFAULT_DATA,
+    ready: false,
+    userId: null,
+  });
 
   useEffect(() => {
-    // Deferred to an effect (not a lazy useState initializer) so the first client render
-    // matches the server-rendered markup before we read browser-only localStorage.
+    // Waits for auth to resolve, then loads (or resets) billing state scoped to that specific
+    // user's id — otherwise two different accounts on the same browser would share one balance.
+    if (!authReady) return;
+    if (!user) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reacting to auth resolving to "signed out", an external system
+      setState({ data: DEFAULT_DATA, ready: true, userId: null });
+      return;
+    }
     let data = DEFAULT_DATA;
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) data = { ...DEFAULT_DATA, ...(JSON.parse(raw) as Partial<BillingData>) };
+      const raw = window.localStorage.getItem(STORAGE_PREFIX + user.id);
+      if (raw) data = sanitize(JSON.parse(raw));
     } catch {
       // keep defaults
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- see src/lib/auth.tsx for rationale
-    setState({ data, ready: true });
-  }, []);
+    setState({ data, ready: true, userId: user.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately keyed on user.id, not user object identity, so token refreshes don't re-trigger a reload
+  }, [authReady, user?.id]);
 
   function update(fn: (d: BillingData) => BillingData) {
     setState((prev) => {
+      if (!prev.userId) return prev;
       const next = fn(prev.data);
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return { data: next, ready: true };
+      window.localStorage.setItem(STORAGE_PREFIX + prev.userId, JSON.stringify(next));
+      return { ...prev, data: next };
     });
   }
 

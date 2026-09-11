@@ -20,7 +20,7 @@ export default function DashboardPage() {
         </div>
         <Link
           href="/workspace"
-          className="cf-pill-main inline-flex items-center justify-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 whitespace-nowrap"
+          className="inline-flex items-center justify-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 whitespace-nowrap"
         >
           <span className="material-symbols-outlined text-[16px]">add</span>
           <span>New Project</span>
@@ -34,7 +34,7 @@ export default function DashboardPage() {
             <Link
               key={project.id}
               href={`/workspace?load=${project.id}`}
-              className="cf-card bg-[#121216]/90 border border-white/[0.08] hover:border-amber-300/30 rounded-2xl p-5 flex flex-col transition-all duration-300 group"
+              className="bg-[#121216]/90 border border-white/[0.08] hover:border-amber-300/30 rounded-2xl p-5 flex flex-col transition-all duration-300 group"
             >
               <div
                 className={`w-full rounded-xl bg-[#0b0b0e] border border-white/10 flex flex-col items-center justify-center mb-4 relative overflow-hidden ${

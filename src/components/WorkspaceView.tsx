@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import IngestCard from "@/components/IngestCard";
 import SynthesisCard from "@/components/SynthesisCard";
-import ExportCard from "@/components/ExportCard";
+import ExportCard, { type ExportSnapshot } from "@/components/ExportCard";
 import { SYNTH_STEPS, stepsCompletedAt, type PipelineStatus, type Ratio } from "@/lib/pipeline";
 import type { Project } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
@@ -25,6 +25,8 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
 
   const [playing, setPlaying] = useState(false);
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "done">("idle");
+  const [exportSnapshot, setExportSnapshot] = useState<ExportSnapshot | null>(null);
+  const downloadInFlightRef = useRef(false);
 
   // Pick up the user's saved default ratio for brand-new (non-resumed) projects, once prefs load.
   useEffect(() => {
@@ -73,6 +75,8 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setLog([]);
     loggedCountRef.current = 0;
     setDownloadState("idle");
+    setExportSnapshot(null);
+    downloadInFlightRef.current = false;
     setPlaying(false);
   }
 
@@ -83,17 +87,38 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setProgress(55);
     setStatus("synthesizing");
     setDownloadState("idle");
+    setExportSnapshot(null);
+    downloadInFlightRef.current = false;
     setPlaying(false);
   }
 
   function handleDownload() {
-    if (!billing.canExport) return;
+    // Guards against double-spending a credit on a double-click. A ref (not the downloadState
+    // *value*) is what actually blocks re-entrancy, since React state updates aren't visible
+    // synchronously — several clicks fired in the same tick would all still see the old
+    // "idle" state and all pass a check against downloadState alone.
+    if (!billing.ready || !billing.canExport || downloadInFlightRef.current) return;
+    downloadInFlightRef.current = true;
+
+    // Snapshot what this export will look like *before* consumeExportCredit mutates billing
+    // state, so the delivered master's watermark/credit display can't retroactively change.
+    const watermarkFree = billing.isWatermarkFree;
+    const label = watermarkFree
+      ? billing.hasActivePlan
+        ? "No watermark · unlimited exports on your plan"
+        : `No watermark · ${billing.paidCredits - 1} paid credit${billing.paidCredits - 1 === 1 ? "" : "s"} left`
+      : `Includes CutForge watermark (${billing.freeCredits - 1} free export${billing.freeCredits - 1 === 1 ? "" : "s"} left)`;
+
     setDownloadState("preparing");
     window.setTimeout(() => {
       billing.consumeExportCredit();
+      setExportSnapshot({ watermarkFree, label });
       setDownloadState("done");
     }, 900);
-    window.setTimeout(() => setDownloadState("idle"), 2600);
+    window.setTimeout(() => {
+      setDownloadState("idle");
+      downloadInFlightRef.current = false;
+    }, 2600);
   }
 
   function handlePlay() {
@@ -116,7 +141,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         <h1 className="font-display text-4xl sm:text-6xl md:text-7xl font-semibold tracking-tight text-white cf-text-glow leading-[1.08]">
           Video made for you.
         </h1>
-        <p className="font-body text-base sm:text-lg theme-text-sub text-zinc-400 font-light max-w-xl mx-auto leading-relaxed">
+        <p className="font-body text-base sm:text-lg text-zinc-400 font-light max-w-xl mx-auto leading-relaxed">
           From raw clips to a finished cut — CutForge ingests, edits, and masters your footage across one autonomous pipeline.
         </p>
 
@@ -168,6 +193,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
             status={status}
             playing={playing}
             downloadState={downloadState}
+            exportSnapshot={exportSnapshot}
             onPlay={handlePlay}
             onReEdit={handleReEdit}
             onDownload={handleDownload}
@@ -179,7 +205,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         <div className="flex items-center space-x-3">
           <span className="font-display font-bold tracking-[0.2em] text-white">CUTFORGE</span>
           <span className="text-zinc-600">/</span>
-          <span className="theme-text-sub">Autonomous Editorial Video Intelligence</span>
+          <span className="text-zinc-500">Autonomous Editorial Video Intelligence</span>
         </div>
         <div className="flex items-center space-x-6 font-mono text-[11px] text-zinc-500">
           <span className="flex items-center space-x-1.5">

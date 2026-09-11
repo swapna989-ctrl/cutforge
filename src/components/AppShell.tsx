@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { useBilling } from "@/lib/billing";
+import { useBilling, type Plan } from "@/lib/billing";
 
-const PLAN_LABEL = { weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" } as const;
+const PLAN_LABEL: Record<Plan, string> = { none: "No plan", weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" };
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -37,7 +37,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div className="fixed inset-0 pointer-events-none bg-radial-gradient z-0" />
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[700px] h-[340px] bg-amber-400/[0.04] blur-[120px] rounded-full pointer-events-none z-0" />
 
-      <header className="sticky top-0 z-50 w-full px-6 py-4 cf-nav bg-[#08080a]/80 backdrop-blur-xl border-b border-white/[0.06] flex items-center justify-between transition-all">
+      <header className="sticky top-0 z-50 w-full px-6 py-4 bg-[#08080a]/80 backdrop-blur-xl border-b border-white/[0.06] flex items-center justify-between transition-all">
         <Link href="/dashboard" className="flex items-center space-x-3 group cursor-pointer">
           <span className="tracking-[0.32em] font-black text-xl font-display text-white select-none transition-transform group-hover:scale-105 inline-block whitespace-nowrap">
             C U T F O R G E
@@ -61,7 +61,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               className="flex items-center space-x-1.5 text-[11px] font-mono px-3 py-1.5 rounded-full border border-amber-400/20 bg-amber-400/[0.06] text-amber-200/90 hover:bg-amber-400/[0.12] hover:border-amber-400/30 transition-all whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[14px]">bolt</span>
-              <span>{billing.hasActivePlan ? `${PLAN_LABEL[billing.plan as keyof typeof PLAN_LABEL]} Plan` : `${billing.freeCredits + billing.paidCredits} credits`}</span>
+              <span>{billing.hasActivePlan ? `${PLAN_LABEL[billing.plan]} Plan` : `${billing.freeCredits + billing.paidCredits} credits`}</span>
             </Link>
           )}
           {user && <span className="hidden sm:inline-block text-[11px] font-mono text-zinc-400 truncate max-w-[140px]">{user.email}</span>}
