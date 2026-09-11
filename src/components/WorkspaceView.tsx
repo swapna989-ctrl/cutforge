@@ -6,13 +6,15 @@ import IngestCard from "@/components/IngestCard";
 import SynthesisCard from "@/components/SynthesisCard";
 import ExportCard, { type ExportSnapshot } from "@/components/ExportCard";
 import { SYNTH_STEPS, stepsCompletedAt, type PipelineStatus, type Ratio } from "@/lib/pipeline";
-import type { Project } from "@/lib/projects";
+import { createProject, updateProject, deleteProject, type Project } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 
 export default function WorkspaceView({ initialProject }: { initialProject?: Project }) {
   const { prefs, ready: prefsReady } = usePrefs();
   const billing = useBilling();
+  // The real Supabase row id backing this session, once ingest has created one.
+  const projectIdRef = useRef<string | null>(initialProject?.id ?? null);
 
   const [ratio, setRatio] = useState<Ratio>(initialProject?.ratio ?? "9:16");
 
@@ -49,26 +51,56 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   // Append activity log lines as progress crosses each step's threshold, and finish when done.
   useEffect(() => {
     if (status !== "synthesizing") return;
+    let advanced = false;
     while (loggedCountRef.current < SYNTH_STEPS.length && SYNTH_STEPS[loggedCountRef.current].at <= progress) {
       const step = SYNTH_STEPS[loggedCountRef.current];
       setLog((l) => [...l, step.msg]);
       loggedCountRef.current += 1;
+      advanced = true;
     }
-    if (progress >= 100) setStatus("ready");
+    const reachedReady = progress >= 100;
+    if (reachedReady) setStatus("ready");
+
+    // Persist at each step threshold (not every ~160ms tick) — enough granularity to resume
+    // accurately without writing to the database dozens of times per run.
+    if ((advanced || reachedReady) && projectIdRef.current) {
+      updateProject(projectIdRef.current, { pipelineStatus: reachedReady ? "ready" : "synthesizing", progress }).catch(() => {});
+    }
   }, [progress, status]);
 
   function handleFile(file: File) {
     setFileName(file.name);
     setStatus("ingesting");
+
+    // Fire-and-forget: the mocked pipeline runs locally regardless of whether this succeeds, so a
+    // failed insert (e.g. the projects table migration hasn't been run yet) degrades gracefully
+    // instead of blocking the demo.
+    createProject({ name: file.name, ratio, pipelineStatus: "ingesting", progress: 0 })
+      .then((created) => {
+        projectIdRef.current = created.id;
+      })
+      .catch(() => {
+        projectIdRef.current = null;
+      });
+
     window.setTimeout(() => {
       loggedCountRef.current = 0;
       setLog([]);
       setProgress(0);
       setStatus("synthesizing");
+      if (projectIdRef.current) {
+        updateProject(projectIdRef.current, { pipelineStatus: "synthesizing", progress: 0 }).catch(() => {});
+      }
     }, 700);
   }
 
   function handleReset() {
+    // "Replace clip" abandons whatever was ingested — delete its row rather than leaving an
+    // orphaned draft behind.
+    if (projectIdRef.current) {
+      deleteProject(projectIdRef.current).catch(() => {});
+      projectIdRef.current = null;
+    }
     setStatus("idle");
     setFileName(null);
     setProgress(0);
@@ -90,6 +122,9 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setExportSnapshot(null);
     downloadInFlightRef.current = false;
     setPlaying(false);
+    if (projectIdRef.current) {
+      updateProject(projectIdRef.current, { pipelineStatus: "synthesizing", progress: 55 }).catch(() => {});
+    }
   }
 
   function handleDownload() {
@@ -125,6 +160,13 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setPlaying((p) => !p);
   }
 
+  function handleSetRatio(next: Ratio) {
+    setRatio(next);
+    if (projectIdRef.current) {
+      updateProject(projectIdRef.current, { ratio: next }).catch(() => {});
+    }
+  }
+
   const formatReadout = ratio === "9:16" ? "9:16 TIKTOK / REELS" : "16:9 CINEMATIC MASTER";
 
   return (
@@ -148,7 +190,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         <div className="pt-6 flex flex-col items-center">
           <div className="inline-flex items-center p-1 rounded-full bg-[#141418] border border-white/10 shadow-inner">
             <button
-              onClick={() => setRatio("9:16")}
+              onClick={() => handleSetRatio("9:16")}
               className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
                 ratio === "9:16" ? "bg-[#fbf6ee] text-[#08080a] shadow-[0_0_16px_rgba(244,213,141,0.35)] font-semibold" : "text-zinc-400 hover:text-white"
               }`}
@@ -157,7 +199,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
               <span>9:16 Vertical</span>
             </button>
             <button
-              onClick={() => setRatio("16:9")}
+              onClick={() => handleSetRatio("16:9")}
               className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
                 ratio === "16:9" ? "bg-[#fbf6ee] text-[#08080a] shadow-[0_0_16px_rgba(244,213,141,0.35)] font-semibold" : "text-zinc-400 hover:text-white"
               }`}
