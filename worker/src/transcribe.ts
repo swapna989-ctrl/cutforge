@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { createReadStream } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { writeFile, stat } from "node:fs/promises";
 import { env } from "./env.js";
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY, maxRetries: 4, timeout: 120000 });
@@ -56,6 +56,15 @@ export async function transcribeToSrt(audioPath: string, srtOutputPath: string):
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
 
+  const { size: audioBytes } = await stat(audioPath);
+  console.log(`Transcribing ${audioPath}: ${audioBytes} bytes`);
+  if (audioBytes < 1000) {
+    // A near-empty audio file (extraction produced silence/nothing) will make Whisper return
+    // zero segments every time — no amount of retrying an API call fixes a bad input file, and
+    // failing loudly here beats silently shipping a captionless "success" downstream.
+    throw new Error(`Extracted audio is suspiciously small (${audioBytes} bytes) — likely a broken extraction, not a transcription issue`);
+  }
+
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const response = await openai.audio.transcriptions.create({
@@ -67,6 +76,14 @@ export async function transcribeToSrt(audioPath: string, srtOutputPath: string):
       });
 
       const segments = (response as unknown as { segments?: Segment[] }).segments ?? [];
+      console.log(`Transcription attempt ${attempt}: got ${segments.length} segment(s)`);
+      if (segments.length === 0) {
+        // Real speech producing zero segments is itself anomalous (seen once against real
+        // footage with no diagnosed cause yet) — retry rather than silently write an empty
+        // caption track that renders as "success" with no visible captions.
+        throw new Error("Whisper returned 0 segments for non-trivial audio");
+      }
+
       await writeFile(srtOutputPath, segmentsToSrt(segments), "utf-8");
       return;
     } catch (err) {
