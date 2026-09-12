@@ -35,7 +35,27 @@ export function getUploadUrl(key: string, contentType: string): Promise<string> 
   return getSignedUrl(s3, command, { expiresIn: 300 });
 }
 
-export function getDownloadUrl(key: string): Promise<string> {
-  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key });
+/**
+ * Builds a `Content-Disposition: attachment` value for the given filename. This is what
+ * actually forces a save-to-disk prompt across browsers — the HTML `download` attribute on an
+ * `<a>` tag is only reliably honored for same-origin URLs, and a presigned R2 URL is always
+ * cross-origin, so without this header (S3/R2's `response-content-disposition` param) browsers —
+ * Mobile Safari especially — just navigate to and preview the video instead of downloading it.
+ * Includes both a plain ASCII fallback and an RFC 5987 UTF-8 form so non-ASCII project names
+ * degrade gracefully instead of producing a malformed header.
+ */
+function contentDisposition(filename: string): string {
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_") || "cutforge-master.mp4";
+  const utf8Encoded = encodeURIComponent(filename);
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+}
+
+export function getDownloadUrl(key: string, filename: string): Promise<string> {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ResponseContentDisposition: contentDisposition(filename),
+    ResponseContentType: "video/mp4",
+  });
   return getSignedUrl(s3, command, { expiresIn: 300 });
 }

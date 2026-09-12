@@ -14,10 +14,15 @@ export async function GET(request: Request) {
 
   // RLS (select_own_projects) already scopes this to the caller's own row — no extra
   // ownership check needed here.
-  const { data: project, error } = await supabase.from("projects").select("output_key").eq("id", projectId).maybeSingle();
+  const { data: project, error } = await supabase.from("projects").select("output_key, name").eq("id", projectId).maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!project?.output_key) return NextResponse.json({ error: "No finished master for this project yet" }, { status: 404 });
 
-  const downloadUrl = await getDownloadUrl(project.output_key);
+  // Base the download's filename on the project name (what the user actually recognizes it by)
+  // rather than the R2 key, which is just a UUID.
+  const baseName = (project.name || "cutforge-master").replace(/\.[^./\\]+$/, "");
+  const filename = `${baseName}-cutforge.mp4`;
+
+  const downloadUrl = await getDownloadUrl(project.output_key, filename);
   return NextResponse.json({ downloadUrl });
 }

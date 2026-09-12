@@ -25,6 +25,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   const [log, setLog] = useState<string[]>(initialProject?.statusMessage ? [initialProject.statusMessage] : []);
   const [errorMessage, setErrorMessage] = useState<string | null>(initialProject?.errorMessage ?? null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "done">("idle");
@@ -128,6 +129,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setLog([]);
     setErrorMessage(null);
     setUploadError(null);
+    setDownloadError(null);
     lastStatusMessageRef.current = null;
     setDownloadState("idle");
     setExportSnapshot(null);
@@ -143,6 +145,14 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     const id = projectIdRef.current;
     if (!billing.ready || !billing.canExport || downloadInFlightRef.current || !id) return;
     downloadInFlightRef.current = true;
+    setDownloadError(null);
+
+    // Opened synchronously, in direct response to the click, so it still counts as a
+    // user-initiated navigation once the real URL is ready a few `await`s later — Safari
+    // (especially iOS) can refuse to treat a *later* location change as trusted and silently
+    // block it, which is the main reason downloads have been unreliable on iPhone. We just
+    // redirect this already-open tab once we have the real download URL.
+    const downloadWindow = window.open("", "_blank");
 
     // Snapshot what this export will look like *before* consumeExportCredit mutates billing
     // state, so the delivered master's watermark/credit display can't retroactively change.
@@ -159,24 +169,32 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     (async () => {
       try {
         const res = await fetch(`/api/download-url?projectId=${id}`);
-        if (!res.ok) throw new Error("Could not prepare download");
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          // A presigned URL freshly generated per-request essentially can't expire before use —
+          // this path is really "the master isn't ready yet" (404) or a transient server error.
+          throw new Error(body?.error ?? "Could not prepare download — the link may have expired. Please try again.");
+        }
         const { downloadUrl } = (await res.json()) as { downloadUrl: string };
 
         // Server-enforced — this can genuinely fail (e.g. another tab spent the last credit in
         // the gap between the canExport check above and now), not just a local state update.
         const { error } = await billing.consumeExportCredit();
         if (error) {
+          downloadWindow?.close();
           setDownloadState("idle");
           downloadInFlightRef.current = false;
           return;
         }
 
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = fileName ?? "cutforge-master.mp4";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        if (downloadWindow) {
+          downloadWindow.location.href = downloadUrl;
+        } else {
+          // Popup blocked (or window.open unsupported) — fall back to a same-tab navigation.
+          // This still downloads correctly rather than previewing, since the URL itself now
+          // carries a Content-Disposition: attachment header from the server.
+          window.location.href = downloadUrl;
+        }
 
         setExportSnapshot({ watermarkFree, label });
         setDownloadState("done");
@@ -186,6 +204,8 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         }, 1700);
       } catch (err) {
         console.error(err);
+        downloadWindow?.close();
+        setDownloadError(err instanceof Error ? err.message : "Download failed. Please try again.");
         setDownloadState("idle");
         downloadInFlightRef.current = false;
       }
@@ -265,6 +285,9 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
 
         {uploadError && (
           <p className="text-center text-xs text-red-400 mb-6 font-mono">{uploadError}</p>
+        )}
+        {downloadError && (
+          <p className="text-center text-xs text-red-400 mb-6 font-mono">{downloadError}</p>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
