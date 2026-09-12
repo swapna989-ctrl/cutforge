@@ -1,6 +1,13 @@
 // Loads worker/.env into process.env for local runs. On Railway, env vars are injected
 // directly by the platform and there's no .env file — dotenv finds nothing and no-ops.
 import "dotenv/config";
+import { setDefaultResultOrder } from "node:dns";
+
+// Railway services have outbound IPv6 disabled by default, but Node resolves addresses in
+// whatever order the resolver returns them — so a host with AAAA records can have every
+// connection attempt start on an unroutable IPv6 address. Preferring IPv4 removes that
+// failure mode for every outbound call (OpenAI, Supabase, R2) rather than one at a time.
+setDefaultResultOrder("ipv4first");
 import { env } from "./env.js";
 import { claimNextJob } from "./supabase.js";
 import { processJob, environmentReport } from "./pipeline.js";

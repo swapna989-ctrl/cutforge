@@ -8,7 +8,7 @@ import { transcribeToSrt } from "./transcribe.js";
 import { updateJob, type ProjectRow } from "./supabase.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
-export const WORKER_BUILD = "2026-09-12-thread-pinning";
+export const WORKER_BUILD = "2026-09-12-transcribe-retry";
 
 const MB = 1024 * 1024;
 
