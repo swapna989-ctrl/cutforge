@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import AppShell from "@/components/AppShell";
 import WorkspaceView from "@/components/WorkspaceView";
 import { useRequireAuth } from "@/lib/auth";
 import { getProject, type Project } from "@/lib/projects";
@@ -43,9 +42,5 @@ export default function WorkspaceRoute() {
 
   if (!ready || !user || projectLoadState === "loading") return null;
 
-  return (
-    <AppShell>
-      <WorkspaceView initialProject={project ?? undefined} />
-    </AppShell>
-  );
+  return <WorkspaceView initialProject={project ?? undefined} />;
 }

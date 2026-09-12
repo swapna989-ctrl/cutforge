@@ -29,30 +29,6 @@ body {
   background: radial-gradient(circle at 50% 12%, rgba(244, 213, 141, 0.12) 0%, rgba(226, 139, 117, 0.04) 35%, rgba(8, 8, 10, 0) 70%);
 }
 
-.cf-text-glow {
-  text-shadow: 0 0 24px rgba(255, 255, 255, 0.2), 0 0 45px rgba(244, 213, 141, 0.15);
-}
-
-/* ---------- Ratio frames ---------- */
-.ratio-frame-9-16 {
-  width: 200px;
-  height: 355px;
-}
-.ratio-frame-16-9 {
-  width: 330px;
-  height: 185px;
-}
-@media (min-width: 640px) {
-  .ratio-frame-9-16 {
-    width: 220px;
-    height: 391px;
-  }
-  .ratio-frame-16-9 {
-    width: 350px;
-    height: 198px;
-  }
-}
-
 /* ---------- Shadows ---------- */
 .shadow-cf-card {
   box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
@@ -64,52 +40,6 @@ body {
   box-shadow: 0 0 34px rgba(251, 191, 36, 0.75), 0 6px 18px rgba(0, 0, 0, 0.6);
 }
 
-/* ---------- Animations ---------- */
-@keyframes cfPulse {
-  0%,
-  100% {
-    opacity: 0.85;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.03);
-  }
-}
-.glow-pulse {
-  animation: cfPulse 3s ease-in-out infinite;
-}
-
-@keyframes waveformBar {
-  0%,
-  100% {
-    transform: scaleY(0.55);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-.waveform-bar {
-  transform-origin: center;
-}
-.waveform-bar.is-live {
-  animation: waveformBar 1.1s ease-in-out infinite;
-}
-
-@keyframes logLineIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.log-line {
-  animation: logLineIn 0.25s ease-out;
-}
-
 /* ---------- Scrollbars ---------- */
 ::-webkit-scrollbar {
   display: none;
@@ -117,12 +47,4 @@ body {
 body {
   -ms-overflow-style: none;
   scrollbar-width: none;
-}
-.cf-log-scroll::-webkit-scrollbar {
-  display: block;
-  width: 4px;
-}
-.cf-log-scroll::-webkit-scrollbar-thumb {
-  background: rgba(244, 213, 141, 0.25);
-  border-radius: 4px;
 }

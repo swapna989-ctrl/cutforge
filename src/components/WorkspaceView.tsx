@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import IngestCard from "@/components/IngestCard";
-import SynthesisCard from "@/components/SynthesisCard";
-import ExportCard, { type ExportSnapshot } from "@/components/ExportCard";
+import WorkspaceShell from "@/components/WorkspaceShell";
+import MediaStage from "@/components/MediaStage";
+import ExportPanel, { type ExportSnapshot } from "@/components/ExportPanel";
 import type { PipelineStatus, Ratio } from "@/lib/pipeline";
 import { createProject, updateProject, deleteProject, getProject, type Project } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
@@ -15,19 +14,27 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   const billing = useBilling();
   // The real Supabase row id backing this session, once ingest has created one.
   const projectIdRef = useRef<string | null>(initialProject?.id ?? null);
-  const lastStatusMessageRef = useRef<string | null>(initialProject?.statusMessage ?? null);
+  // Tracks the current local blob: URL so it can be revoked (avoids leaking memory) whenever
+  // it's replaced or the component unmounts — the browser never frees these on its own.
+  const localPreviewUrlRef = useRef<string | null>(null);
 
   const [ratio, setRatio] = useState<Ratio>(initialProject?.ratio ?? "9:16");
 
   const [status, setStatus] = useState<PipelineStatus>(initialProject?.pipelineStatus ?? "idle");
   const [fileName, setFileName] = useState<string | null>(initialProject?.name ?? null);
+  const [fileSizeBytes, setFileSizeBytes] = useState<number | null>(null);
+  const [duration, setDuration] = useState<number | null>(null);
   const [progress, setProgress] = useState(initialProject?.progress ?? 0);
-  const [log, setLog] = useState<string[]>(initialProject?.statusMessage ? [initialProject.statusMessage] : []);
+  const [statusMessage, setStatusMessage] = useState<string | null>(initialProject?.statusMessage ?? null);
   const [errorMessage, setErrorMessage] = useState<string | null>(initialProject?.errorMessage ?? null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  const [playing, setPlaying] = useState(false);
+  // The footage the preview actually plays: the user's own just-picked file until the real
+  // master exists, then the real rendered output — never a decorative stand-in for either.
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [realPreviewUrl, setRealPreviewUrl] = useState<string | null>(null);
+
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "done">("idle");
   const [exportSnapshot, setExportSnapshot] = useState<ExportSnapshot | null>(null);
   const downloadInFlightRef = useRef(false);
@@ -40,6 +47,33 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to prefs becoming ready, not every prefs change
   }, [prefsReady]);
+
+  // Revoke the local blob: URL whenever it's replaced or the workspace unmounts.
+  useEffect(() => {
+    return () => {
+      if (localPreviewUrlRef.current) URL.revokeObjectURL(localPreviewUrlRef.current);
+    };
+  }, []);
+
+  // Fetches a real, playable URL for the finished master — the same endpoint the download
+  // button uses, but calling it alone (with no consumeExportCredit call) has no billing
+  // side-effect, so watching the result costs nothing. Covers both the live "just finished"
+  // transition and resuming an already-ready project from the dashboard.
+  useEffect(() => {
+    if (status !== "ready" || realPreviewUrl) return;
+    const id = projectIdRef.current;
+    if (!id) return;
+    let cancelled = false;
+    fetch(`/api/download-url?projectId=${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { downloadUrl: string } | null) => {
+        if (!cancelled && body?.downloadUrl) setRealPreviewUrl(body.downloadUrl);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [status, realPreviewUrl]);
 
   // Poll the real project row while a worker could plausibly be acting on it. The worker
   // processes jobs in the background regardless of whether anyone's watching, so this is
@@ -55,10 +89,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         if (!project) return;
 
         setProgress(project.progress);
-        if (project.statusMessage && project.statusMessage !== lastStatusMessageRef.current) {
-          lastStatusMessageRef.current = project.statusMessage;
-          setLog((l) => [...l, project.statusMessage as string]);
-        }
+        if (project.statusMessage) setStatusMessage(project.statusMessage);
 
         if (project.pipelineStatus === "failed") {
           setErrorMessage(project.errorMessage);
@@ -77,6 +108,14 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   }, [status]);
 
   async function handleFile(file: File) {
+    // Shows the user's real footage immediately, entirely client-side — no need to wait for
+    // upload or processing to see the actual clip they just picked.
+    if (localPreviewUrlRef.current) URL.revokeObjectURL(localPreviewUrlRef.current);
+    const objectUrl = URL.createObjectURL(file);
+    localPreviewUrlRef.current = objectUrl;
+    setLocalPreviewUrl(objectUrl);
+    setDuration(null);
+    setFileSizeBytes(file.size);
     setFileName(file.name);
     setStatus("ingesting");
     setUploadError(null);
@@ -106,8 +145,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         watermark: !billing.isWatermarkFree,
       });
       projectIdRef.current = created.id;
-      lastStatusMessageRef.current = null;
-      setLog([]);
+      setStatusMessage(null);
       setStatus("queued");
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed");
@@ -123,18 +161,24 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       deleteProject(projectIdRef.current).catch(() => {});
       projectIdRef.current = null;
     }
+    if (localPreviewUrlRef.current) {
+      URL.revokeObjectURL(localPreviewUrlRef.current);
+      localPreviewUrlRef.current = null;
+    }
     setStatus("idle");
     setFileName(null);
+    setFileSizeBytes(null);
+    setDuration(null);
+    setLocalPreviewUrl(null);
+    setRealPreviewUrl(null);
     setProgress(0);
-    setLog([]);
+    setStatusMessage(null);
     setErrorMessage(null);
     setUploadError(null);
     setDownloadError(null);
-    lastStatusMessageRef.current = null;
     setDownloadState("idle");
     setExportSnapshot(null);
     downloadInFlightRef.current = false;
-    setPlaying(false);
   }
 
   function handleDownload() {
@@ -171,8 +215,6 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         const res = await fetch(`/api/download-url?projectId=${id}`);
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          // A presigned URL freshly generated per-request essentially can't expire before use —
-          // this path is really "the master isn't ready yet" (404) or a transient server error.
           throw new Error(body?.error ?? "Could not prepare download — the link may have expired. Please try again.");
         }
         const { downloadUrl } = (await res.json()) as { downloadUrl: string };
@@ -212,10 +254,6 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     })();
   }
 
-  function handlePlay() {
-    setPlaying((p) => !p);
-  }
-
   function handleSetRatio(next: Ratio) {
     setRatio(next);
     if (projectIdRef.current) {
@@ -223,27 +261,10 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     }
   }
 
-  const formatReadout = ratio === "9:16" ? "9:16 TIKTOK / REELS" : "16:9 CINEMATIC MASTER";
-
   return (
-    <>
-      <Link
-        href="/dashboard"
-        className="inline-flex items-center space-x-1.5 text-xs font-mono text-zinc-500 hover:text-amber-200 transition-colors mb-8"
-      >
-        <span className="material-symbols-outlined text-[15px]">arrow_back</span>
-        <span>Back to dashboard</span>
-      </Link>
-
-      <div className="text-center space-y-4 max-w-3xl mx-auto">
-        <h1 className="font-display text-4xl sm:text-6xl md:text-7xl font-semibold tracking-tight text-white cf-text-glow leading-[1.08]">
-          Video made for you.
-        </h1>
-        <p className="font-body text-base sm:text-lg text-zinc-400 font-light max-w-xl mx-auto leading-relaxed">
-          From raw clips to a finished cut — CutForge ingests, edits, and masters your footage across one autonomous pipeline.
-        </p>
-
-        <div className="pt-6 flex flex-col items-center">
+    <WorkspaceShell projectName={fileName} status={status}>
+      <div className="space-y-5">
+        <div className="flex items-center justify-between">
           <div className="inline-flex items-center p-1 rounded-full bg-[#141418] border border-white/10 shadow-inner">
             <button
               onClick={() => handleSetRatio("9:16")}
@@ -252,7 +273,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
               }`}
             >
               <span className="material-symbols-outlined text-[14px]">stay_current_portrait</span>
-              <span>9:16 Vertical</span>
+              <span>9:16</span>
             </button>
             <button
               onClick={() => handleSetRatio("16:9")}
@@ -261,67 +282,37 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
               }`}
             >
               <span className="material-symbols-outlined text-[14px]">crop_16_9</span>
-              <span>16:9 Cinema</span>
+              <span>16:9</span>
             </button>
           </div>
-          <p className="text-xs font-mono text-zinc-500 mt-2.5 tracking-wider uppercase">
-            OUTPUT CANVAS: <span className="text-amber-200/90 font-medium">{formatReadout}</span>
-          </p>
         </div>
+
+        {uploadError && <p className="text-center text-xs text-red-400 font-mono">{uploadError}</p>}
+        {downloadError && <p className="text-center text-xs text-red-400 font-mono">{downloadError}</p>}
+
+        <MediaStage
+          ratio={ratio}
+          status={status}
+          fileName={fileName}
+          fileSizeBytes={fileSizeBytes}
+          duration={duration}
+          previewSrc={realPreviewUrl ?? localPreviewUrl}
+          progress={progress}
+          statusMessage={statusMessage}
+          errorMessage={errorMessage}
+          onFile={handleFile}
+          onReset={handleReset}
+          onDurationLoaded={setDuration}
+        />
+
+        <ExportPanel
+          status={status}
+          downloadState={downloadState}
+          exportSnapshot={exportSnapshot}
+          onReEdit={handleReset}
+          onDownload={handleDownload}
+        />
       </div>
-
-      <section className="mt-16 sm:mt-20">
-        <div className="flex items-center justify-between pb-6 border-b border-white/[0.06] mb-8">
-          <div className="flex items-center space-x-3">
-            <span className="text-xs font-mono tracking-widest text-amber-300/80 uppercase">WORKFLOW PIPELINE</span>
-            <span className="text-zinc-600">•</span>
-            <span className="text-xs text-zinc-400 tracking-wide font-body">Step 01 Ingest ➔ Step 02 Synthesize ➔ Step 03 Export</span>
-          </div>
-          <div className="hidden sm:flex items-center space-x-2 text-xs font-mono text-zinc-500">
-            <span className="w-2 h-2 rounded-full bg-amber-400/80" />
-            <span>AUTONOMOUS ENGINE ACTIVE</span>
-          </div>
-        </div>
-
-        {uploadError && (
-          <p className="text-center text-xs text-red-400 mb-6 font-mono">{uploadError}</p>
-        )}
-        {downloadError && (
-          <p className="text-center text-xs text-red-400 mb-6 font-mono">{downloadError}</p>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
-          <IngestCard ratio={ratio} status={status} fileName={fileName} onFile={handleFile} onReset={handleReset} />
-          <SynthesisCard ratio={ratio} status={status} progress={progress} log={log} />
-          <ExportCard
-            ratio={ratio}
-            status={status}
-            playing={playing}
-            downloadState={downloadState}
-            exportSnapshot={exportSnapshot}
-            errorMessage={errorMessage}
-            onPlay={handlePlay}
-            onReEdit={handleReset}
-            onDownload={handleDownload}
-          />
-        </div>
-      </section>
-
-      <footer className="mt-20 pt-8 border-t border-white/[0.06] flex flex-col sm:flex-row justify-between items-center text-xs text-zinc-400 font-body space-y-4 sm:space-y-0">
-        <div className="flex items-center space-x-3">
-          <span className="font-display font-bold tracking-[0.2em] text-white">CUTFORGE</span>
-          <span className="text-zinc-600">/</span>
-          <span className="text-zinc-500">Autonomous Editorial Video Intelligence</span>
-        </div>
-        <div className="flex items-center space-x-6 font-mono text-[11px] text-zinc-500">
-          <span className="flex items-center space-x-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span>SYSTEM NOMINAL</span>
-          </span>
-          <span>LATENCY: 12MS</span>
-          <span className="text-zinc-400">v4.8 SPEC</span>
-        </div>
-      </footer>
-    </>
+    </WorkspaceShell>
   );
 }
