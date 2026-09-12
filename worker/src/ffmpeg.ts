@@ -3,6 +3,8 @@ import ffprobePath from "ffprobe-static";
 import ffmpeg from "fluent-ffmpeg";
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 if (ffprobePath?.path) ffmpeg.setFfprobePath(ffprobePath.path);
@@ -203,6 +205,12 @@ export function extractAudio(inputPath: string, outputPath: string): Promise<voi
   );
 }
 
+// Pre-rendered rather than drawn at runtime via the `drawtext` filter: Railway's bundled Linux
+// ffmpeg-static binary doesn't include drawtext at all (confirmed from a real production
+// failure — "No such filter: 'drawtext'" — despite subtitles/libass working fine), while the
+// `overlay` filter used to composite this image is present in essentially every ffmpeg build.
+const WATERMARK_PNG = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "watermark.png");
+
 /**
  * Burns in captions and, for free-tier exports, a watermark — this is the actual enforcement
  * of the paywall on the real file, not just a UI preview. `watermark` is decided once, at
@@ -217,18 +225,25 @@ export function finalizeVideo(inputPath: string, srtPath: string, watermark: boo
   const escapedSrtPath = `'${srtPath.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
   const captionStyle =
     "FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=70";
+  const subtitlesFilter = `subtitles=${escapedSrtPath}:force_style='${captionStyle}'`;
 
-  const filters = [`subtitles=${escapedSrtPath}:force_style='${captionStyle}'`];
-  if (watermark) {
-    filters.push(
-      "drawtext=text='CUTFORGE':fontcolor=white@0.75:fontsize=22:x=w-tw-24:y=h-th-24:box=1:boxcolor=black@0.4:boxborderw=8"
+  const command = ffmpeg(inputPath).inputOptions(DECODE_OPTS);
+
+  if (!watermark) {
+    return runFfmpeg(
+      command.outputOptions(["-vf", subtitlesFilter, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]),
+      outputPath
     );
   }
 
+  // With a second input, filtering happens in a labeled complex-filter graph rather than the
+  // simple -vf chain, and audio (untouched by any of this) needs an explicit map since it's
+  // no longer implicitly carried through as the input's only other stream.
   return runFfmpeg(
-    ffmpeg(inputPath)
-      .inputOptions(DECODE_OPTS)
-      .outputOptions(["-vf", filters.join(","), "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]),
+    command
+      .input(WATERMARK_PNG)
+      .complexFilter([`[0:v]${subtitlesFilter}[captioned]`, "[captioned][1:v]overlay=W-w-24:H-h-24[out]"], "out")
+      .outputOptions(["-map", "0:a", "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]),
     outputPath
   );
 }
