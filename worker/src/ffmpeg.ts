@@ -205,11 +205,32 @@ export function extractAudio(inputPath: string, outputPath: string): Promise<voi
   );
 }
 
+const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
+
 // Pre-rendered rather than drawn at runtime via the `drawtext` filter: Railway's bundled Linux
 // ffmpeg-static binary doesn't include drawtext at all (confirmed from a real production
 // failure — "No such filter: 'drawtext'" — despite subtitles/libass working fine), while the
 // `overlay` filter used to composite this image is present in essentially every ffmpeg build.
-const WATERMARK_PNG = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "watermark.png");
+const WATERMARK_PNG = join(ASSETS_DIR, "watermark.png");
+
+// The subtitles filter "working" (no error, real segments transcribed) but rendering zero
+// visible text was a second real production failure: libass needs an actual font file to draw
+// glyphs with, headless Linux containers commonly ship none at all, and libass fails that
+// silently — no error, just nothing drawn. FontName=Arial only ever worked in local testing
+// because Windows happens to have Arial installed system-wide, which masked the gap entirely.
+// Bundling a real font (Geist, Vercel's OFL-licensed font already vendored by Next.js) and
+// pointing `fontsdir` at it removes the dependency on whatever fonts a given host has.
+const FONT_NAME = "Geist";
+const escapedFontsDir = `'${ASSETS_DIR.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
+
+function escapeFfmpegPath(p: string): string {
+  // ffmpeg's subtitles filter treats ':' as an option separator, so a Windows-style drive
+  // letter path needs escaping — irrelevant on Railway's Linux runtime, but harmless to guard.
+  // A single backslash escape alone isn't enough for ffmpeg's own filtergraph option parser
+  // (it still splits on the colon); wrapping the whole path in single quotes on top of that
+  // escape is what actually keeps it intact — verified against real ffmpeg output.
+  return `'${p.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
+}
 
 /**
  * Burns in captions and, for free-tier exports, a watermark — this is the actual enforcement
@@ -217,15 +238,9 @@ const WATERMARK_PNG = join(dirname(fileURLToPath(import.meta.url)), "..", "asset
  * upload time, from the user's billing status then (see projects.watermark).
  */
 export function finalizeVideo(inputPath: string, srtPath: string, watermark: boolean, outputPath: string): Promise<void> {
-  // ffmpeg's subtitles filter treats ':' as an option separator, so a Windows-style drive
-  // letter path needs escaping — irrelevant on Railway's Linux runtime, but harmless to guard.
-  // A single backslash escape alone isn't enough for ffmpeg's own filtergraph option parser
-  // (it still splits on the colon); wrapping the whole path in single quotes on top of that
-  // escape is what actually keeps it intact — verified against real ffmpeg output.
-  const escapedSrtPath = `'${srtPath.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
-  const captionStyle =
-    "FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=70";
-  const subtitlesFilter = `subtitles=${escapedSrtPath}:force_style='${captionStyle}'`;
+  const escapedSrtPath = escapeFfmpegPath(srtPath);
+  const captionStyle = `FontName=${FONT_NAME},FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=70`;
+  const subtitlesFilter = `subtitles=${escapedSrtPath}:force_style='${captionStyle}':fontsdir=${escapedFontsDir}`;
 
   const command = ffmpeg(inputPath).inputOptions(DECODE_OPTS);
 
