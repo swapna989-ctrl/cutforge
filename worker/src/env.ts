@@ -1,5 +1,10 @@
+// Trimming isn't optional hygiene here — it's fixed two real production outages so far
+// (a Supabase URL and an OpenAI key each landed with a trailing newline from a dashboard paste,
+// the latter making the "Bearer <key>" auth header technically invalid and failing every
+// OpenAI call with an opaque "Connection error."). Stripping whitespace can't break a value
+// that was already correct, so there's no reason to ever skip it.
 function required(name: string): string {
-  const value = process.env[name];
+  const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing required env var: ${name}`);
   return value;
 }
