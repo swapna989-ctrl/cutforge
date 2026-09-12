@@ -1,20 +1,6 @@
-export type PipelineStatus = "idle" | "ingesting" | "synthesizing" | "ready";
+export type PipelineStatus = "idle" | "ingesting" | "queued" | "synthesizing" | "ready" | "failed";
 export type Ratio = "9:16" | "16:9";
 
-export const SYNTH_STEPS: { at: number; msg: string }[] = [
-  { at: 0, msg: "Detecting scene boundaries…" },
-  { at: 14, msg: "Removing dead air & filler pauses…" },
-  { at: 30, msg: "Syncing cuts to 124 BPM beat grid…" },
-  { at: 46, msg: "Balancing color — Cinematic Warm…" },
-  { at: 62, msg: "Auto-framing subject for output canvas…" },
-  { at: 76, msg: "Generating captions…" },
-  { at: 90, msg: "Rendering preview…" },
-  { at: 100, msg: "Master ready." },
-];
-
+// Purely decorative flavor for the synthesis card's footer — real progress drives it, but the
+// "24 shots" framing itself isn't a literal count of anything the worker tracks.
 export const TOTAL_SHOTS = 24;
-
-/** How many SYNTH_STEPS log lines should already be showing at a given progress percentage. */
-export function stepsCompletedAt(progress: number): number {
-  return SYNTH_STEPS.filter((s) => s.at <= progress).length;
-}

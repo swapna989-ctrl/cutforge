@@ -12,6 +12,7 @@ export default function ExportCard({
   playing,
   downloadState,
   exportSnapshot,
+  errorMessage,
   onPlay,
   onReEdit,
   onDownload,
@@ -21,11 +22,13 @@ export default function ExportCard({
   playing: boolean;
   downloadState: "idle" | "preparing" | "done";
   exportSnapshot: ExportSnapshot | null;
+  errorMessage: string | null;
   onPlay: () => void;
   onReEdit: () => void;
   onDownload: () => void;
 }) {
   const isReady = status === "ready";
+  const isFailed = status === "failed";
   const billing = useBilling();
 
   // While an export is in flight or just finished, freeze the watermark/credit display to what
@@ -37,9 +40,11 @@ export default function ExportCard({
   const canExportNow = billing.ready && billing.canExport;
   const showUpgradeLink = isReady && downloadState === "idle" && !canExportNow;
 
-  const badge = isReady
-    ? { text: "Mastered", cls: "bg-amber-400/10 border-amber-400/20 text-amber-200" }
-    : { text: "Pending", cls: "bg-white/[0.06] border-white/10 text-zinc-400" };
+  const badge = isFailed
+    ? { text: "Failed", cls: "bg-red-500/10 border-red-500/30 text-red-400" }
+    : isReady
+      ? { text: "Mastered", cls: "bg-amber-400/10 border-amber-400/20 text-amber-200" }
+      : { text: "Pending", cls: "bg-white/[0.06] border-white/10 text-zinc-400" };
 
   return (
     <article className="bg-[#121216]/90 border border-white/[0.08] hover:border-white/[0.15] rounded-[32px] p-7 sm:p-8 flex flex-col justify-between shadow-cf-card relative overflow-hidden backdrop-blur-md group transition-all duration-300">
@@ -59,12 +64,14 @@ export default function ExportCard({
 
       <div className="my-6 flex flex-col items-center text-center">
         <h2 className="font-display text-2xl sm:text-3xl font-semibold tracking-tight text-white">
-          {isReady ? "Master ready." : "Awaiting synthesis."}
+          {isFailed ? "Processing failed." : isReady ? "Master ready." : "Awaiting synthesis."}
         </h2>
         <p className="font-body text-xs sm:text-sm text-zinc-400 mt-2 max-w-xs font-light leading-relaxed">
-          {isReady
-            ? "Your master is rendered at broadcast quality, framed for the canvas you chose, ready to re-edit or ship straight to your channels."
-            : "Your finished master will appear here the moment synthesis wraps up."}
+          {isFailed
+            ? (errorMessage ?? "Something went wrong while processing your clip.")
+            : isReady
+              ? "Your master is rendered at broadcast quality, framed for the canvas you chose, ready to re-edit or ship straight to your channels."
+              : "Your finished master will appear here the moment synthesis wraps up."}
         </p>
 
         <div className="mt-7 flex items-center justify-center w-full">
@@ -103,7 +110,14 @@ export default function ExportCard({
               </button>
             </div>
 
-            {!isReady && (
+            {isFailed && (
+              <div className="absolute inset-0 bg-black/70 backdrop-blur-[1px] flex flex-col items-center justify-center space-y-1.5 z-20">
+                <span className="material-symbols-outlined text-red-400 text-xl">error</span>
+                <span className="text-[10px] font-mono text-red-300 px-6 text-center">Processing failed — try again</span>
+              </div>
+            )}
+
+            {!isReady && !isFailed && (
               <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex flex-col items-center justify-center space-y-1.5 z-20">
                 <span className="material-symbols-outlined text-zinc-400 text-xl">lock</span>
                 <span className="text-[10px] font-mono text-zinc-400 px-6 text-center">Unlocks when synthesis completes</span>
@@ -127,15 +141,15 @@ export default function ExportCard({
       <div className="pt-4 border-t border-white/[0.06]">
         <div className="flex items-center space-x-3">
           <button
-            disabled={!isReady}
+            disabled={!isReady && !isFailed}
             onClick={onReEdit}
             className={`px-4 py-2.5 rounded-full text-xs font-medium border transition-all ${
-              isReady
+              isReady || isFailed
                 ? "text-zinc-400 hover:text-white border-white/10 hover:border-white/20 bg-white/[0.04] cursor-pointer"
                 : "text-zinc-600 border-white/[0.06] bg-white/[0.02] cursor-not-allowed"
             }`}
           >
-            Re-edit
+            {isFailed ? "Try again" : "Re-edit"}
           </button>
 
           {showUpgradeLink ? (

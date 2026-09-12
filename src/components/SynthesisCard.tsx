@@ -15,14 +15,17 @@ export default function SynthesisCard({
   progress: number;
   log: string[];
 }) {
-  const isActive = status === "synthesizing";
+  const isActive = status === "queued" || status === "synthesizing";
   const isWaiting = status === "idle" || status === "ingesting";
+  const isFailed = status === "failed";
 
-  const badge = isWaiting
-    ? { text: "Standby", cls: "bg-white/[0.06] border-white/10 text-zinc-400" }
-    : isActive
-      ? { text: "Editing", cls: "bg-amber-400/10 border-amber-400/30 text-amber-300" }
-      : { text: "Synced", cls: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" };
+  const badge = isFailed
+    ? { text: "Failed", cls: "bg-red-500/10 border-red-500/30 text-red-400" }
+    : isWaiting
+      ? { text: "Standby", cls: "bg-white/[0.06] border-white/10 text-zinc-400" }
+      : isActive
+        ? { text: "Editing", cls: "bg-amber-400/10 border-amber-400/30 text-amber-300" }
+        : { text: "Synced", cls: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" };
 
   // Deterministic pseudo-random waveform (same value on server and client, avoids hydration mismatch).
   const bars = useMemo(

@@ -5,8 +5,8 @@ import Link from "next/link";
 import IngestCard from "@/components/IngestCard";
 import SynthesisCard from "@/components/SynthesisCard";
 import ExportCard, { type ExportSnapshot } from "@/components/ExportCard";
-import { SYNTH_STEPS, stepsCompletedAt, type PipelineStatus, type Ratio } from "@/lib/pipeline";
-import { createProject, updateProject, deleteProject, type Project } from "@/lib/projects";
+import type { PipelineStatus, Ratio } from "@/lib/pipeline";
+import { createProject, updateProject, deleteProject, getProject, type Project } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 
@@ -15,15 +15,16 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   const billing = useBilling();
   // The real Supabase row id backing this session, once ingest has created one.
   const projectIdRef = useRef<string | null>(initialProject?.id ?? null);
+  const lastStatusMessageRef = useRef<string | null>(initialProject?.statusMessage ?? null);
 
   const [ratio, setRatio] = useState<Ratio>(initialProject?.ratio ?? "9:16");
 
   const [status, setStatus] = useState<PipelineStatus>(initialProject?.pipelineStatus ?? "idle");
   const [fileName, setFileName] = useState<string | null>(initialProject?.name ?? null);
   const [progress, setProgress] = useState(initialProject?.progress ?? 0);
-  const initialDoneCount = initialProject ? stepsCompletedAt(initialProject.progress) : 0;
-  const [log, setLog] = useState<string[]>(SYNTH_STEPS.slice(0, initialDoneCount).map((s) => s.msg));
-  const loggedCountRef = useRef(initialDoneCount);
+  const [log, setLog] = useState<string[]>(initialProject?.statusMessage ? [initialProject.statusMessage] : []);
+  const [errorMessage, setErrorMessage] = useState<string | null>(initialProject?.errorMessage ?? null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "done">("idle");
@@ -39,64 +40,84 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to prefs becoming ready, not every prefs change
   }, [prefsReady]);
 
-  // Drive the synthesis progress simulation.
+  // Poll the real project row while a worker could plausibly be acting on it. The worker
+  // processes jobs in the background regardless of whether anyone's watching, so this is
+  // genuinely "what's the current state", not a client-driven simulation.
   useEffect(() => {
-    if (status !== "synthesizing") return;
-    const id = setInterval(() => {
-      setProgress((p) => Math.min(100, p + 1 + Math.floor(Math.random() * 2)));
-    }, 160);
-    return () => clearInterval(id);
+    if (status !== "queued" && status !== "synthesizing") return;
+    const id = projectIdRef.current;
+    if (!id) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const project = await getProject(id);
+        if (!project) return;
+
+        setProgress(project.progress);
+        if (project.statusMessage && project.statusMessage !== lastStatusMessageRef.current) {
+          lastStatusMessageRef.current = project.statusMessage;
+          setLog((l) => [...l, project.statusMessage as string]);
+        }
+
+        if (project.pipelineStatus === "failed") {
+          setErrorMessage(project.errorMessage);
+          setStatus("failed");
+        } else if (project.pipelineStatus === "ready") {
+          setStatus("ready");
+        } else if (project.pipelineStatus !== status) {
+          setStatus(project.pipelineStatus);
+        }
+      } catch (err) {
+        console.error("Poll failed:", err);
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
   }, [status]);
 
-  // Append activity log lines as progress crosses each step's threshold, and finish when done.
-  useEffect(() => {
-    if (status !== "synthesizing") return;
-    let advanced = false;
-    while (loggedCountRef.current < SYNTH_STEPS.length && SYNTH_STEPS[loggedCountRef.current].at <= progress) {
-      const step = SYNTH_STEPS[loggedCountRef.current];
-      setLog((l) => [...l, step.msg]);
-      loggedCountRef.current += 1;
-      advanced = true;
-    }
-    const reachedReady = progress >= 100;
-    if (reachedReady) setStatus("ready");
-
-    // Persist at each step threshold (not every ~160ms tick) — enough granularity to resume
-    // accurately without writing to the database dozens of times per run.
-    if ((advanced || reachedReady) && projectIdRef.current) {
-      updateProject(projectIdRef.current, { pipelineStatus: reachedReady ? "ready" : "synthesizing", progress }).catch(() => {});
-    }
-  }, [progress, status]);
-
-  function handleFile(file: File) {
+  async function handleFile(file: File) {
     setFileName(file.name);
     setStatus("ingesting");
+    setUploadError(null);
+    setErrorMessage(null);
 
-    // Fire-and-forget: the mocked pipeline runs locally regardless of whether this succeeds, so a
-    // failed insert (e.g. the projects table migration hasn't been run yet) degrades gracefully
-    // instead of blocking the demo.
-    createProject({ name: file.name, ratio, pipelineStatus: "ingesting", progress: 0 })
-      .then((created) => {
-        projectIdRef.current = created.id;
-      })
-      .catch(() => {
-        projectIdRef.current = null;
+    try {
+      const urlRes = await fetch("/api/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, contentType: file.type || "video/mp4" }),
       });
-
-    window.setTimeout(() => {
-      loggedCountRef.current = 0;
-      setLog([]);
-      setProgress(0);
-      setStatus("synthesizing");
-      if (projectIdRef.current) {
-        updateProject(projectIdRef.current, { pipelineStatus: "synthesizing", progress: 0 }).catch(() => {});
+      if (!urlRes.ok) {
+        const body = await urlRes.json().catch(() => null);
+        throw new Error(body?.error ?? "Could not prepare upload");
       }
-    }, 700);
+      const { uploadUrl, key } = (await urlRes.json()) as { uploadUrl: string; key: string };
+
+      const putRes = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "video/mp4" } });
+      if (!putRes.ok) throw new Error("Upload to storage failed");
+
+      const created = await createProject({
+        name: file.name,
+        ratio,
+        pipelineStatus: "queued",
+        progress: 0,
+        sourceKey: key,
+        watermark: !billing.isWatermarkFree,
+      });
+      projectIdRef.current = created.id;
+      lastStatusMessageRef.current = null;
+      setLog([]);
+      setStatus("queued");
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+      setStatus("idle");
+      setFileName(null);
+    }
   }
 
   function handleReset() {
-    // "Replace clip" abandons whatever was ingested — delete its row rather than leaving an
-    // orphaned draft behind.
+    // "Replace clip" (and "Try again" after a failure) abandons whatever was ingested — delete
+    // its row rather than leaving an orphaned draft behind.
     if (projectIdRef.current) {
       deleteProject(projectIdRef.current).catch(() => {});
       projectIdRef.current = null;
@@ -105,26 +126,13 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setFileName(null);
     setProgress(0);
     setLog([]);
-    loggedCountRef.current = 0;
+    setErrorMessage(null);
+    setUploadError(null);
+    lastStatusMessageRef.current = null;
     setDownloadState("idle");
     setExportSnapshot(null);
     downloadInFlightRef.current = false;
     setPlaying(false);
-  }
-
-  function handleReEdit() {
-    const doneCount = stepsCompletedAt(55);
-    loggedCountRef.current = doneCount;
-    setLog([...SYNTH_STEPS.slice(0, doneCount).map((s) => s.msg), "Restoring timeline for another pass — reapplying beat sync…"]);
-    setProgress(55);
-    setStatus("synthesizing");
-    setDownloadState("idle");
-    setExportSnapshot(null);
-    downloadInFlightRef.current = false;
-    setPlaying(false);
-    if (projectIdRef.current) {
-      updateProject(projectIdRef.current, { pipelineStatus: "synthesizing", progress: 55 }).catch(() => {});
-    }
   }
 
   function handleDownload() {
@@ -132,11 +140,14 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     // *value*) is what actually blocks re-entrancy, since React state updates aren't visible
     // synchronously — several clicks fired in the same tick would all still see the old
     // "idle" state and all pass a check against downloadState alone.
-    if (!billing.ready || !billing.canExport || downloadInFlightRef.current) return;
+    const id = projectIdRef.current;
+    if (!billing.ready || !billing.canExport || downloadInFlightRef.current || !id) return;
     downloadInFlightRef.current = true;
 
     // Snapshot what this export will look like *before* consumeExportCredit mutates billing
     // state, so the delivered master's watermark/credit display can't retroactively change.
+    // Note this is just the preview label — the file itself was already rendered watermarked
+    // or not, decided once at upload time (see projects.watermark).
     const watermarkFree = billing.isWatermarkFree;
     const label = watermarkFree
       ? billing.hasActivePlan
@@ -145,22 +156,40 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       : `Includes CutForge watermark (${billing.freeCredits - 1} free export${billing.freeCredits - 1 === 1 ? "" : "s"} left)`;
 
     setDownloadState("preparing");
-    window.setTimeout(async () => {
-      // Server-enforced — this can genuinely fail (e.g. another tab spent the last credit in
-      // the gap between the canExport check above and now), not just a local state update.
-      const { error } = await billing.consumeExportCredit();
-      if (error) {
+    (async () => {
+      try {
+        const res = await fetch(`/api/download-url?projectId=${id}`);
+        if (!res.ok) throw new Error("Could not prepare download");
+        const { downloadUrl } = (await res.json()) as { downloadUrl: string };
+
+        // Server-enforced — this can genuinely fail (e.g. another tab spent the last credit in
+        // the gap between the canExport check above and now), not just a local state update.
+        const { error } = await billing.consumeExportCredit();
+        if (error) {
+          setDownloadState("idle");
+          downloadInFlightRef.current = false;
+          return;
+        }
+
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = fileName ?? "cutforge-master.mp4";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        setExportSnapshot({ watermarkFree, label });
+        setDownloadState("done");
+        window.setTimeout(() => {
+          setDownloadState("idle");
+          downloadInFlightRef.current = false;
+        }, 1700);
+      } catch (err) {
+        console.error(err);
         setDownloadState("idle");
         downloadInFlightRef.current = false;
-        return;
       }
-      setExportSnapshot({ watermarkFree, label });
-      setDownloadState("done");
-      window.setTimeout(() => {
-        setDownloadState("idle");
-        downloadInFlightRef.current = false;
-      }, 1700);
-    }, 900);
+    })();
   }
 
   function handlePlay() {
@@ -234,6 +263,10 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
           </div>
         </div>
 
+        {uploadError && (
+          <p className="text-center text-xs text-red-400 mb-6 font-mono">{uploadError}</p>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
           <IngestCard ratio={ratio} status={status} fileName={fileName} onFile={handleFile} onReset={handleReset} />
           <SynthesisCard ratio={ratio} status={status} progress={progress} log={log} />
@@ -243,8 +276,9 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
             playing={playing}
             downloadState={downloadState}
             exportSnapshot={exportSnapshot}
+            errorMessage={errorMessage}
             onPlay={handlePlay}
-            onReEdit={handleReEdit}
+            onReEdit={handleReset}
             onDownload={handleDownload}
           />
         </div>

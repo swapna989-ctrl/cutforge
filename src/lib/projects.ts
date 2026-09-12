@@ -9,6 +9,9 @@ export type Project = {
   progress: number;
   createdAt: string;
   status: "ready" | "draft";
+  statusMessage: string | null;
+  errorMessage: string | null;
+  outputKey: string | null;
 };
 
 type ProjectRow = {
@@ -18,6 +21,9 @@ type ProjectRow = {
   pipeline_status: string;
   progress: number;
   created_at: string;
+  status_message: string | null;
+  error_message: string | null;
+  output_key: string | null;
 };
 
 function mapRow(row: ProjectRow): Project {
@@ -30,6 +36,9 @@ function mapRow(row: ProjectRow): Project {
     progress: row.progress,
     createdAt: row.created_at.slice(0, 10),
     status: pipelineStatus === "ready" ? "ready" : "draft",
+    statusMessage: row.status_message,
+    errorMessage: row.error_message,
+    outputKey: row.output_key,
   };
 }
 
@@ -49,7 +58,16 @@ export async function getProject(id: string | null): Promise<Project | null> {
   return data ? mapRow(data as ProjectRow) : null;
 }
 
-export async function createProject(input: { name: string; ratio: Ratio; pipelineStatus: PipelineStatus; progress: number }): Promise<Project> {
+export async function createProject(input: {
+  name: string;
+  ratio: Ratio;
+  pipelineStatus: PipelineStatus;
+  progress: number;
+  sourceKey?: string;
+  /** Captured once, at upload time, from the user's current billing status — this is what the
+   *  worker actually burns into (or omits from) the real output file. */
+  watermark: boolean;
+}): Promise<Project> {
   const supabase = createClient();
   const {
     data: { user },
@@ -64,6 +82,8 @@ export async function createProject(input: { name: string; ratio: Ratio; pipelin
       ratio: input.ratio,
       pipeline_status: input.pipelineStatus,
       progress: input.progress,
+      source_key: input.sourceKey ?? null,
+      watermark: input.watermark,
     })
     .select()
     .single();

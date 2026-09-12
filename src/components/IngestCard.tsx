@@ -21,7 +21,7 @@ export default function IngestCard({
 
   const isIdle = status === "idle";
   const isIngesting = status === "ingesting";
-  const isHandedOff = status === "synthesizing" || status === "ready";
+  const isHandedOff = status === "queued" || status === "synthesizing" || status === "ready" || status === "failed";
 
   const badge = isIdle
     ? { text: "Ready", cls: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" }
