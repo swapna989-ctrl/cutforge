@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
-import { detectSilences, getDuration, cutSilences, extractAudio, finalizeVideo } from "./ffmpeg.js";
+import { detectSilences, getDuration, cutSilences, extractAudio, finalizeVideo, normalizeResolution } from "./ffmpeg.js";
 import { transcribeToSrt } from "./transcribe.js";
 import { updateJob, type ProjectRow } from "./supabase.js";
 
 export async function processJob(job: ProjectRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-"));
   const sourcePath = join(tmpDir, "source.mp4");
+  const normalizedPath = join(tmpDir, "normalized.mp4");
   const trimmedPath = join(tmpDir, "trimmed.mp4");
   const audioPath = join(tmpDir, "audio.mp3");
   const srtPath = join(tmpDir, "captions.srt");
@@ -21,12 +22,18 @@ export async function processJob(job: ProjectRow): Promise<void> {
     await updateJob(job.id, { status_message: "Downloading your clip…", progress: 10 });
     await downloadToFile(job.source_key, sourcePath);
 
+    // Decodes the (possibly 4K/HEVC) source exactly once and re-encodes it down to a capped
+    // resolution — every step after this works off the much cheaper result, which is what
+    // actually keeps memory under Railway's 1GB container limit for real phone footage.
+    await updateJob(job.id, { status_message: "Preparing footage…", progress: 15 });
+    await normalizeResolution(sourcePath, normalizedPath);
+
     await updateJob(job.id, { status_message: "Detecting scene boundaries…", progress: 20 });
-    const duration = await getDuration(sourcePath);
-    const silences = await detectSilences(sourcePath);
+    const duration = await getDuration(normalizedPath);
+    const silences = await detectSilences(normalizedPath);
 
     await updateJob(job.id, { status_message: "Removing dead air & filler pauses…", progress: 40 });
-    await cutSilences(sourcePath, silences, duration, trimmedPath, tmpDir);
+    await cutSilences(normalizedPath, silences, duration, trimmedPath, tmpDir);
 
     await updateJob(job.id, { status_message: "Transcribing audio…", progress: 60 });
     await extractAudio(trimmedPath, audioPath);

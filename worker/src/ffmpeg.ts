@@ -15,6 +15,30 @@ export type SilenceInterval = { start: number; end: number };
 // `-2` keeps the other edge's aspect ratio while forcing it even, which libx264 requires.
 const SCALE_FILTER = "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'";
 
+// Caps libx264's own internal buffers (lookahead frame queue + reference frames) independent
+// of resolution — the default lookahead (~40 frames) at even 1080p adds up fast against a
+// 1GB container limit. This is the same margin used for every encode in this file.
+const MEMORY_SAFE_X264 = ["-preset", "veryfast", "-x264-params", "rc-lookahead=20:ref=2"];
+
+/**
+ * Decodes the source exactly once at its native resolution/codec and re-encodes it down to the
+ * capped resolution immediately. Without this, cutSilences would re-open and re-decode the
+ * original 4K/HEVC source once per kept segment — each decode pays the full native-resolution
+ * memory cost regardless of the output scale, since scaling happens after decode in the filter
+ * graph. Doing that decode once here, up front, is what actually keeps the worker under
+ * Railway's 1GB container limit; the per-segment scale filter alone wasn't enough because it
+ * only shrinks the *encode* side, not the heavier HEVC *decode* side.
+ */
+export function normalizeResolution(inputPath: string, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"])
+      .save(outputPath)
+      .on("end", () => resolve())
+      .on("error", reject);
+  });
+}
+
 /** Runs ffmpeg's silencedetect filter and parses the silence_start/silence_end pairs from stderr. */
 export function detectSilences(inputPath: string, noiseDb = -30, minDurationSec = 0.6): Promise<SilenceInterval[]> {
   return new Promise((resolve, reject) => {
@@ -78,10 +102,11 @@ export async function cutSilences(
 
   if (segments.length <= 1) {
     // Still re-encodes (rather than stream-copying) so the resolution cap applies even when
-    // no dead air was found — an uncapped 4K passthrough would just OOM the finalize step instead.
+    // no dead air was found — an uncapped source would just OOM the finalize step instead.
+    // A no-op once inputPath is already normalizeResolution()'d, kept as a safety net.
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
-        .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac"])
+        .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"])
         .save(outputPath)
         .on("end", () => resolve())
         .on("error", reject);
@@ -101,8 +126,7 @@ export async function cutSilences(
           SCALE_FILTER,
           "-c:v",
           "libx264",
-          "-preset",
-          "veryfast",
+          ...MEMORY_SAFE_X264,
           "-c:a",
           "aac",
           "-avoid_negative_ts",
@@ -163,7 +187,7 @@ export function finalizeVideo(inputPath: string, srtPath: string, watermark: boo
 
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
-      .outputOptions(["-vf", filters.join(","), "-c:a", "copy"])
+      .outputOptions(["-vf", filters.join(","), "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"])
       .save(outputPath)
       .on("end", () => resolve())
       .on("error", reject);
