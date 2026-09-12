@@ -1,3 +1,6 @@
+// Loads worker/.env into process.env for local runs. On Railway, env vars are injected
+// directly by the platform and there's no .env file — dotenv finds nothing and no-ops.
+import "dotenv/config";
 import { env } from "./env.js";
 import { claimNextJob } from "./supabase.js";
 import { processJob } from "./pipeline.js";

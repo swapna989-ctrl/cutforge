@@ -126,7 +126,10 @@ export function extractAudio(inputPath: string, outputPath: string): Promise<voi
 export function finalizeVideo(inputPath: string, srtPath: string, watermark: boolean, outputPath: string): Promise<void> {
   // ffmpeg's subtitles filter treats ':' as an option separator, so a Windows-style drive
   // letter path needs escaping — irrelevant on Railway's Linux runtime, but harmless to guard.
-  const escapedSrtPath = srtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+  // A single backslash escape alone isn't enough for ffmpeg's own filtergraph option parser
+  // (it still splits on the colon); wrapping the whole path in single quotes on top of that
+  // escape is what actually keeps it intact — verified against real ffmpeg output.
+  const escapedSrtPath = `'${srtPath.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
   const captionStyle =
     "FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=70";
 

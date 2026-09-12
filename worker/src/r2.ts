@@ -9,6 +9,13 @@ import { env } from "./env.js";
 const s3 = new S3Client({
   region: "auto",
   endpoint: env.R2_ENDPOINT,
+  // R2 only reliably supports path-style addressing (endpoint/bucket/key) unless a custom
+  // domain is configured — the SDK's virtual-hosted-style default (bucket.endpoint/key)
+  // resolves to a host R2 doesn't recognize.
+  forcePathStyle: true,
+  // Newer SDK versions attach a CRC32 checksum to every request by default, which R2
+  // doesn't handle the same way S3 does — avoid it entirely, not just on presigned URLs.
+  requestChecksumCalculation: "WHEN_REQUIRED",
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY },
 });
 
