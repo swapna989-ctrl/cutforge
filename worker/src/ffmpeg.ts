@@ -9,10 +9,18 @@ if (ffprobePath?.path) ffmpeg.setFfprobePath(ffprobePath.path);
 
 export type SilenceInterval = { start: number; end: number };
 
+// Caps the long edge at 1080p-equivalent before any re-encode. Source phones routinely shoot
+// 4K, which needs ~4x the decode/encode memory of 1080p and was OOM-killing the worker on
+// Railway's free-tier RAM for clips as short as 13s — social exports don't need 4K anyway.
+// `-2` keeps the other edge's aspect ratio while forcing it even, which libx264 requires.
+const SCALE_FILTER = "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'";
+
 /** Runs ffmpeg's silencedetect filter and parses the silence_start/silence_end pairs from stderr. */
 export function detectSilences(inputPath: string, noiseDb = -30, minDurationSec = 0.6): Promise<SilenceInterval[]> {
   return new Promise((resolve, reject) => {
-    const args = ["-i", inputPath, "-af", `silencedetect=noise=${noiseDb}dB:d=${minDurationSec}`, "-f", "null", "-"];
+    // -vn: silencedetect only needs the audio stream, and decoding video we're about to
+    // discard anyway wastes real memory/CPU on a large source.
+    const args = ["-i", inputPath, "-vn", "-af", `silencedetect=noise=${noiseDb}dB:d=${minDurationSec}`, "-f", "null", "-"];
     const proc = spawn(ffmpegPath as string, args);
     let stderr = "";
     proc.stderr.on("data", (chunk) => {
@@ -69,9 +77,11 @@ export async function cutSilences(
   const segments = keep.filter((k) => k.end - k.start > 0.05);
 
   if (segments.length <= 1) {
+    // Still re-encodes (rather than stream-copying) so the resolution cap applies even when
+    // no dead air was found — an uncapped 4K passthrough would just OOM the finalize step instead.
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
-        .outputOptions(["-c", "copy"])
+        .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac"])
         .save(outputPath)
         .on("end", () => resolve())
         .on("error", reject);
@@ -86,7 +96,18 @@ export async function cutSilences(
       ffmpeg(inputPath)
         .setStartTime(segments[i].start)
         .duration(segments[i].end - segments[i].start)
-        .outputOptions(["-c:v", "libx264", "-c:a", "aac", "-avoid_negative_ts", "make_zero"])
+        .outputOptions([
+          "-vf",
+          SCALE_FILTER,
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-c:a",
+          "aac",
+          "-avoid_negative_ts",
+          "make_zero",
+        ])
         .save(segPath)
         .on("end", () => resolve())
         .on("error", reject);
