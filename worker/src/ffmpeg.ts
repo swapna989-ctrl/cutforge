@@ -9,16 +9,29 @@ if (ffprobePath?.path) ffmpeg.setFfprobePath(ffprobePath.path);
 
 export type SilenceInterval = { start: number; end: number };
 
-// Caps the long edge at 1080p-equivalent before any re-encode. Source phones routinely shoot
-// 4K, which needs ~4x the decode/encode memory of 1080p and was OOM-killing the worker on
-// Railway's free-tier RAM for clips as short as 13s — social exports don't need 4K anyway.
+// Caps the long edge at 720p-equivalent before any re-encode. Measured empirically against a
+// real 13s 1080x1920@60fps iPhone clip (36MB, h264, ~23Mbps) — a naive 1920-cap + light x264
+// settings still peaked at ~683MB RSS for that single encode alone, which blows Railway's 1GB
+// *total container* budget once Node's own baseline (aws-sdk, openai, supabase-js, etc. all
+// loaded) is added on top. The combination below measured ~235MB peak for the same file.
 // `-2` keeps the other edge's aspect ratio while forcing it even, which libx264 requires.
-const SCALE_FILTER = "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'";
+const SCALE_FILTER = "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))'";
 
-// Caps libx264's own internal buffers (lookahead frame queue + reference frames) independent
-// of resolution — the default lookahead (~40 frames) at even 1080p adds up fast against a
-// 1GB container limit. This is the same margin used for every encode in this file.
-const MEMORY_SAFE_X264 = ["-preset", "veryfast", "-x264-params", "rc-lookahead=20:ref=2"];
+// Caps libx264's own internal buffers (lookahead frame queue + reference frames) and thread
+// pool independent of resolution — these scale with frame count/size regardless of the target
+// output, and a default lookahead (~40 frames) at even 720p still adds up meaningfully.
+// 30fps caps frame throughput for sources that shoot 60fps (common on phones); the pipeline
+// doesn't need more than that for social-style output.
+const MEMORY_SAFE_X264 = [
+  "-r",
+  "30",
+  "-threads",
+  "2",
+  "-preset",
+  "veryfast",
+  "-x264-params",
+  "rc-lookahead=10:ref=1:threads=2",
+];
 
 /**
  * Decodes the source exactly once at its native resolution/codec and re-encodes it down to the
