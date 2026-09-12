@@ -9,46 +9,59 @@ if (ffprobePath?.path) ffmpeg.setFfprobePath(ffprobePath.path);
 
 export type SilenceInterval = { start: number; end: number };
 
-// Caps the long edge at 720p-equivalent before any re-encode. Measured empirically against a
-// real 13s 1080x1920@60fps iPhone clip (36MB, h264, ~23Mbps) — a naive 1920-cap + light x264
-// settings still peaked at ~683MB RSS for that single encode alone, which blows Railway's 1GB
-// *total container* budget once Node's own baseline (aws-sdk, openai, supabase-js, etc. all
-// loaded) is added on top. The combination below measured ~235MB peak for the same file.
+// Caps the long edge at 720p-equivalent before any re-encode. Measured against a real 13s
+// iPhone clip (1080x1920 h264 @ 60fps, 36MB, ~23Mbps): a 1920 cap left it untouched and still
+// peaked at ~683MB RSS for one encode, which exceeds Railway's 1GB *total container* budget
+// once Node's own footprint is added. This combination measured ~235MB peak for that file.
 // `-2` keeps the other edge's aspect ratio while forcing it even, which libx264 requires.
 const SCALE_FILTER = "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))'";
 
-// Caps libx264's own internal buffers (lookahead frame queue + reference frames) and thread
-// pool independent of resolution — these scale with frame count/size regardless of the target
-// output, and a default lookahead (~40 frames) at even 720p still adds up meaningfully.
-// 30fps caps frame throughput for sources that shoot 60fps (common on phones); the pipeline
-// doesn't need more than that for social-style output.
+// A container commonly reports the *host's* CPU count rather than its own quota, and both the
+// h264 decoder and x264 auto-size their thread pools (and per-thread frame buffers) from that.
+// On a 2-vCPU/1GB Railway instance sitting on a many-core host, that alone can allocate far
+// past the memory limit before any real work happens, so pin it explicitly at both ends.
+const THREAD_LIMIT = "2";
+
+// Applies to the *decoder*. ffmpeg only honours -threads for decoding when it appears before
+// -i; the same flag in output position configures the encoder instead, which is why setting it
+// only on the output left decode threads unbounded.
+const DECODE_OPTS = ["-threads", THREAD_LIMIT];
+
+// Caps libx264's own internal buffers (lookahead queue, reference frames, thread pool). 30fps
+// caps frame throughput for phone sources that shoot 60 — social output doesn't need more.
 const MEMORY_SAFE_X264 = [
   "-r",
   "30",
   "-threads",
-  "2",
+  THREAD_LIMIT,
   "-preset",
   "veryfast",
   "-x264-params",
-  "rc-lookahead=10:ref=1:threads=2",
+  `rc-lookahead=10:ref=1:threads=${THREAD_LIMIT}`,
 ];
 
 /**
- * Decodes the source exactly once at its native resolution/codec and re-encodes it down to the
- * capped resolution immediately. Without this, cutSilences would re-open and re-decode the
- * original 4K/HEVC source once per kept segment — each decode pays the full native-resolution
- * memory cost regardless of the output scale, since scaling happens after decode in the filter
- * graph. Doing that decode once here, up front, is what actually keeps the worker under
- * Railway's 1GB container limit; the per-segment scale filter alone wasn't enough because it
- * only shrinks the *encode* side, not the heavier HEVC *decode* side.
+ * Runs a fluent-ffmpeg command, attaching the exact command line and the tail of ffmpeg's own
+ * stderr to any failure. Without this an OOM kill surfaces as a bare "killed with signal
+ * SIGKILL" with no indication of which invocation died or what it was doing.
  */
-export function normalizeResolution(inputPath: string, outputPath: string): Promise<void> {
+function runFfmpeg(command: ffmpeg.FfmpegCommand, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"])
-      .save(outputPath)
+    let commandLine = "";
+    const stderrTail: string[] = [];
+    command
+      .on("start", (cl: string) => {
+        commandLine = cl;
+      })
+      .on("stderr", (line: string) => {
+        stderrTail.push(line);
+        if (stderrTail.length > 25) stderrTail.shift();
+      })
       .on("end", () => resolve())
-      .on("error", reject);
+      .on("error", (err: Error) => {
+        reject(new Error(`${err.message}\ncmd: ${commandLine}\nstderr tail:\n${stderrTail.join("\n")}`));
+      })
+      .save(outputPath);
   });
 }
 
@@ -57,7 +70,17 @@ export function detectSilences(inputPath: string, noiseDb = -30, minDurationSec 
   return new Promise((resolve, reject) => {
     // -vn: silencedetect only needs the audio stream, and decoding video we're about to
     // discard anyway wastes real memory/CPU on a large source.
-    const args = ["-i", inputPath, "-vn", "-af", `silencedetect=noise=${noiseDb}dB:d=${minDurationSec}`, "-f", "null", "-"];
+    const args = [
+      ...DECODE_OPTS,
+      "-i",
+      inputPath,
+      "-vn",
+      "-af",
+      `silencedetect=noise=${noiseDb}dB:d=${minDurationSec}`,
+      "-f",
+      "null",
+      "-",
+    ];
     const proc = spawn(ffmpegPath as string, args);
     let stderr = "";
     proc.stderr.on("data", (chunk) => {
@@ -83,6 +106,21 @@ export function getDuration(inputPath: string): Promise<number> {
       resolve(data.format.duration ?? 0);
     });
   });
+}
+
+/**
+ * Decodes the source exactly once at its native resolution/codec and re-encodes it down to the
+ * capped resolution immediately. Without this, cutSilences would re-open and re-decode the
+ * original source once per kept segment — each decode pays the full native-resolution memory
+ * cost regardless of output scale, since scaling happens after decode in the filter graph.
+ */
+export function normalizeResolution(inputPath: string, outputPath: string): Promise<void> {
+  return runFfmpeg(
+    ffmpeg(inputPath)
+      .inputOptions(DECODE_OPTS)
+      .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"]),
+    outputPath
+  );
 }
 
 /**
@@ -114,24 +152,23 @@ export async function cutSilences(
   const segments = keep.filter((k) => k.end - k.start > 0.05);
 
   if (segments.length <= 1) {
-    // Still re-encodes (rather than stream-copying) so the resolution cap applies even when
-    // no dead air was found — an uncapped source would just OOM the finalize step instead.
-    // A no-op once inputPath is already normalizeResolution()'d, kept as a safety net.
-    await new Promise<void>((resolve, reject) => {
+    // Still re-encodes (rather than stream-copying) so the caps apply even when no dead air
+    // was found. A no-op once inputPath is already normalizeResolution()'d, kept as a safety net.
+    await runFfmpeg(
       ffmpeg(inputPath)
-        .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"])
-        .save(outputPath)
-        .on("end", () => resolve())
-        .on("error", reject);
-    });
+        .inputOptions(DECODE_OPTS)
+        .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"]),
+      outputPath
+    );
     return;
   }
 
   const segmentPaths: string[] = [];
   for (let i = 0; i < segments.length; i++) {
     const segPath = `${tmpDir}/seg-${i}.mp4`;
-    await new Promise<void>((resolve, reject) => {
+    await runFfmpeg(
       ffmpeg(inputPath)
+        .inputOptions(DECODE_OPTS)
         .setStartTime(segments[i].start)
         .duration(segments[i].end - segments[i].start)
         .outputOptions([
@@ -144,36 +181,26 @@ export async function cutSilences(
           "aac",
           "-avoid_negative_ts",
           "make_zero",
-        ])
-        .save(segPath)
-        .on("end", () => resolve())
-        .on("error", reject);
-    });
+        ]),
+      segPath
+    );
     segmentPaths.push(segPath);
   }
 
   const listPath = `${tmpDir}/concat-list.txt`;
   await writeFile(listPath, segmentPaths.map((p) => `file '${p}'`).join("\n"));
 
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg()
-      .input(listPath)
-      .inputOptions(["-f", "concat", "-safe", "0"])
-      .outputOptions(["-c", "copy"])
-      .save(outputPath)
-      .on("end", () => resolve())
-      .on("error", reject);
-  });
+  await runFfmpeg(
+    ffmpeg().input(listPath).inputOptions(["-f", "concat", "-safe", "0"]).outputOptions(["-c", "copy"]),
+    outputPath
+  );
 }
 
 export function extractAudio(inputPath: string, outputPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .outputOptions(["-vn", "-acodec", "libmp3lame", "-q:a", "4"])
-      .save(outputPath)
-      .on("end", () => resolve())
-      .on("error", reject);
-  });
+  return runFfmpeg(
+    ffmpeg(inputPath).inputOptions(DECODE_OPTS).outputOptions(["-vn", "-acodec", "libmp3lame", "-q:a", "4"]),
+    outputPath
+  );
 }
 
 /**
@@ -198,11 +225,10 @@ export function finalizeVideo(inputPath: string, srtPath: string, watermark: boo
     );
   }
 
-  return new Promise((resolve, reject) => {
+  return runFfmpeg(
     ffmpeg(inputPath)
-      .outputOptions(["-vf", filters.join(","), "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"])
-      .save(outputPath)
-      .on("end", () => resolve())
-      .on("error", reject);
-  });
+      .inputOptions(DECODE_OPTS)
+      .outputOptions(["-vf", filters.join(","), "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]),
+    outputPath
+  );
 }

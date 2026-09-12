@@ -3,7 +3,7 @@
 import "dotenv/config";
 import { env } from "./env.js";
 import { claimNextJob } from "./supabase.js";
-import { processJob } from "./pipeline.js";
+import { processJob, environmentReport } from "./pipeline.js";
 
 let running = true;
 process.on("SIGTERM", () => {
@@ -25,6 +25,7 @@ async function tick(): Promise<void> {
 
 async function main() {
   console.log("CutForge worker started, polling every", env.POLL_INTERVAL_MS, "ms");
+  console.log("[env]", environmentReport());
   while (running) {
     await tick();
     await new Promise((r) => setTimeout(r, env.POLL_INTERVAL_MS));

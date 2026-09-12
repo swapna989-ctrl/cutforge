@@ -1,11 +1,32 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, cpus, totalmem, freemem } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
 import { detectSilences, getDuration, cutSilences, extractAudio, finalizeVideo, normalizeResolution } from "./ffmpeg.js";
 import { transcribeToSrt } from "./transcribe.js";
 import { updateJob, type ProjectRow } from "./supabase.js";
+
+/** Bumped by hand so a deployed failure proves which code Railway is actually running. */
+export const WORKER_BUILD = "2026-09-12-thread-pinning";
+
+const MB = 1024 * 1024;
+
+/**
+ * What the *container* reports about itself. A container that reports the host's CPU count
+ * rather than its own quota makes ffmpeg auto-size thread pools (and their per-thread frame
+ * buffers) far past its real memory allowance, so these numbers are the difference between
+ * diagnosing an OOM and guessing at one.
+ */
+export function environmentReport(): string {
+  return [
+    `build=${WORKER_BUILD}`,
+    `cpus=${cpus().length}`,
+    `totalmem=${Math.round(totalmem() / MB)}MB`,
+    `freemem=${Math.round(freemem() / MB)}MB`,
+    `noderss=${Math.round(process.memoryUsage().rss / MB)}MB`,
+  ].join(" ");
+}
 
 export async function processJob(job: ProjectRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-"));
@@ -54,10 +75,11 @@ export async function processJob(job: ProjectRow): Promise<void> {
     });
   } catch (err) {
     console.error(`Job ${job.id} failed:`, err);
+    const detail = err instanceof Error ? err.message : String(err);
     await updateJob(job.id, {
       pipeline_status: "failed",
       status_message: null,
-      error_message: err instanceof Error ? err.message : String(err),
+      error_message: `${detail}\n[env] ${environmentReport()}`,
     }).catch((updateErr) => console.error("Also failed to record the failure:", updateErr));
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
