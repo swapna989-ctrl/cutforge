@@ -2,7 +2,7 @@ import ffmpegPath from "ffmpeg-static";
 import ffprobePath from "ffprobe-static";
 import ffmpeg from "fluent-ffmpeg";
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { copyFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -191,6 +191,27 @@ export async function cutSilences(
 
   const listPath = `${tmpDir}/concat-list.txt`;
   await writeFile(listPath, segmentPaths.map((p) => `file '${p}'`).join("\n"));
+
+  await runFfmpeg(
+    ffmpeg().input(listPath).inputOptions(["-f", "concat", "-safe", "0"]).outputOptions(["-c", "copy"]),
+    outputPath
+  );
+}
+
+/**
+ * Concatenates already-normalized clips (each already run through normalizeResolution, so all
+ * share identical codec/resolution/fps) into one file, using the exact same concat-demuxer
+ * pattern cutSilences uses to stitch its own "keep" segments back together. A single clip is
+ * just copied through rather than re-encoded — there's nothing to join.
+ */
+export async function concatClips(inputPaths: string[], outputPath: string, tmpDir: string): Promise<void> {
+  if (inputPaths.length === 1) {
+    await copyFile(inputPaths[0], outputPath);
+    return;
+  }
+
+  const listPath = join(tmpDir, "clips-concat-list.txt");
+  await writeFile(listPath, inputPaths.map((p) => `file '${p}'`).join("\n"));
 
   await runFfmpeg(
     ffmpeg().input(listPath).inputOptions(["-f", "concat", "-safe", "0"]).outputOptions(["-c", "copy"]),

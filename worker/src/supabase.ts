@@ -49,3 +49,25 @@ export async function updateJob(id: string, patch: Partial<ProjectRow>): Promise
   const { error } = await supabase.from("projects").update(patch).eq("id", id);
   if (error) throw error;
 }
+
+export type ProjectClipRow = {
+  id: string;
+  project_id: string;
+  position: number;
+  source_key: string;
+  file_name: string;
+  duration: number | null;
+  created_at: string;
+};
+
+// Ordered by position: multi-clip projects are stitched together in exactly this order. A
+// project with no rows here (every project today) just gets an empty array back.
+export async function getProjectClips(projectId: string): Promise<ProjectClipRow[]> {
+  const { data, error } = await supabase
+    .from("project_clips")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("position", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}

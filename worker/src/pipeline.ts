@@ -3,9 +3,17 @@ import { tmpdir, cpus, totalmem, freemem } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
-import { detectSilences, getDuration, cutSilences, extractAudio, finalizeVideo, normalizeResolution } from "./ffmpeg.js";
+import {
+  detectSilences,
+  getDuration,
+  cutSilences,
+  extractAudio,
+  finalizeVideo,
+  normalizeResolution,
+  concatClips,
+} from "./ffmpeg.js";
 import { transcribeToSrt } from "./transcribe.js";
-import { updateJob, type ProjectRow } from "./supabase.js";
+import { updateJob, getProjectClips, type ProjectRow } from "./supabase.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
 export const WORKER_BUILD = "2026-09-12-transcribe-retry";
@@ -30,7 +38,6 @@ export function environmentReport(): string {
 
 export async function processJob(job: ProjectRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-"));
-  const sourcePath = join(tmpDir, "source.mp4");
   const normalizedPath = join(tmpDir, "normalized.mp4");
   const trimmedPath = join(tmpDir, "trimmed.mp4");
   const audioPath = join(tmpDir, "audio.mp3");
@@ -38,16 +45,44 @@ export async function processJob(job: ProjectRow): Promise<void> {
   const finalPath = join(tmpDir, "final.mp4");
 
   try {
-    if (!job.source_key) throw new Error("Job has no source_key");
+    const clips = await getProjectClips(job.id);
 
-    await updateJob(job.id, { status_message: "Downloading your clip…", progress: 10 });
-    await downloadToFile(job.source_key, sourcePath);
+    if (clips.length > 0) {
+      // Multi-clip path: download and normalize each source clip individually (same
+      // per-clip cost as the single-clip path below, just repeated in order), then
+      // concatenate the normalized clips into exactly the kind of file normalizeResolution
+      // itself would have produced — everything from here on is the existing pipeline,
+      // completely unaware that its input came from more than one source file.
+      const clipPaths: string[] = [];
+      for (let i = 0; i < clips.length; i++) {
+        const clip = clips[i];
+        const clipProgress = 10 + Math.round((i / clips.length) * 10);
+        await updateJob(job.id, {
+          status_message: `Downloading clip ${i + 1} of ${clips.length}…`,
+          progress: clipProgress,
+        });
+        const clipSourcePath = join(tmpDir, `clip-${i}-source.mp4`);
+        const clipNormalizedPath = join(tmpDir, `clip-${i}-normalized.mp4`);
+        await downloadToFile(clip.source_key, clipSourcePath);
+        await normalizeResolution(clipSourcePath, clipNormalizedPath);
+        clipPaths.push(clipNormalizedPath);
+      }
 
-    // Decodes the (possibly 4K/HEVC) source exactly once and re-encodes it down to a capped
-    // resolution — every step after this works off the much cheaper result, which is what
-    // actually keeps memory under Railway's 1GB container limit for real phone footage.
-    await updateJob(job.id, { status_message: "Preparing footage…", progress: 15 });
-    await normalizeResolution(sourcePath, normalizedPath);
+      await updateJob(job.id, { status_message: "Combining clips…", progress: 20 });
+      await concatClips(clipPaths, normalizedPath, tmpDir);
+    } else {
+      if (!job.source_key) throw new Error("Job has no source_key");
+      const sourcePath = join(tmpDir, "source.mp4");
+
+      await updateJob(job.id, { status_message: "Downloading your clip…", progress: 10 });
+      await downloadToFile(job.source_key, sourcePath);
+
+      // Decodes the (possibly 4K/HEVC) source exactly once and re-encodes it down to a capped
+      // resolution — every step after this works off the much cheaper result, which is what
+      // actually keeps memory under Railway's 1GB container limit for real phone footage.
+      await updateJob(job.id, { status_message: "Preparing footage…", progress: 15 });
+      await normalizeResolution(sourcePath, normalizedPath);
+    }
 
     await updateJob(job.id, { status_message: "Detecting scene boundaries…", progress: 20 });
     const duration = await getDuration(normalizedPath);
