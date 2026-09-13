@@ -5,9 +5,49 @@ import WorkspaceShell from "@/components/WorkspaceShell";
 import MediaStage from "@/components/MediaStage";
 import ExportPanel, { type ExportSnapshot } from "@/components/ExportPanel";
 import type { PipelineStatus, Ratio } from "@/lib/pipeline";
-import { createProject, updateProject, deleteProject, getProject, type Project } from "@/lib/projects";
+import { createProject, createProjectClip, updateProject, deleteProject, getProject, type Project } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
+
+/** Reads a File's real duration off a throwaway (never-rendered) video element — the same
+ *  technique MediaStage already uses for the visible preview, just off-DOM so every uploaded
+ *  clip (not only the one currently shown) can have its real duration recorded. Null, not
+ *  invented, when a browser genuinely can't report it (e.g. certain webm files). */
+function readVideoDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(video.duration) ? video.duration : null);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+  });
+}
+
+/** Requests a presigned R2 upload URL for one file and PUTs it there, returning the object key. */
+async function uploadClipToR2(file: File): Promise<string> {
+  const urlRes = await fetch("/api/upload-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileName: file.name, contentType: file.type || "video/mp4" }),
+  });
+  if (!urlRes.ok) {
+    const body = await urlRes.json().catch(() => null);
+    throw new Error(body?.error ?? "Could not prepare upload");
+  }
+  const { uploadUrl, key } = (await urlRes.json()) as { uploadUrl: string; key: string };
+
+  const putRes = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "video/mp4" } });
+  if (!putRes.ok) throw new Error("Upload to storage failed");
+
+  return key;
+}
 
 export default function WorkspaceView({ initialProject }: { initialProject?: Project }) {
   const { prefs, ready: prefsReady } = usePrefs();
@@ -107,47 +147,80 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     return () => clearInterval(interval);
   }, [status]);
 
-  async function handleFile(file: File) {
+  async function handleFiles(files: File[]) {
+    if (files.length === 0) return;
+
     // Shows the user's real footage immediately, entirely client-side — no need to wait for
-    // upload or processing to see the actual clip they just picked.
+    // upload or processing to see the actual clip they just picked. The visible preview/strip
+    // still reflects only the first clip; the media strip and timeline aren't being redesigned
+    // in this step, so multi-clip footage isn't shown yet even though it's all being uploaded.
     if (localPreviewUrlRef.current) URL.revokeObjectURL(localPreviewUrlRef.current);
-    const objectUrl = URL.createObjectURL(file);
+    const objectUrl = URL.createObjectURL(files[0]);
     localPreviewUrlRef.current = objectUrl;
     setLocalPreviewUrl(objectUrl);
     setDuration(null);
-    setFileSizeBytes(file.size);
-    setFileName(file.name);
+    setFileSizeBytes(files[0].size);
+    setFileName(files[0].name);
     setStatus("ingesting");
     setUploadError(null);
     setErrorMessage(null);
 
+    // Tracks the project row so a failure partway through can roll it back (cascade-deletes
+    // any project_clips rows already inserted) instead of leaving a half-uploaded draft behind.
+    let createdProjectId: string | null = null;
+
     try {
-      const urlRes = await fetch("/api/upload-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileName: file.name, contentType: file.type || "video/mp4" }),
-      });
-      if (!urlRes.ok) {
-        const body = await urlRes.json().catch(() => null);
-        throw new Error(body?.error ?? "Could not prepare upload");
-      }
-      const { uploadUrl, key } = (await urlRes.json()) as { uploadUrl: string; key: string };
+      const firstDuration = await readVideoDuration(files[0]);
+      const firstKey = await uploadClipToR2(files[0]);
 
-      const putRes = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "video/mp4" } });
-      if (!putRes.ok) throw new Error("Upload to storage failed");
-
+      // The first clip creates the project, exactly like the single-file flow always has —
+      // source_key is still populated from it, so anything reading that column directly keeps
+      // working. Left at "ingesting" rather than "queued" until every clip has actually landed,
+      // since "queued" is what tells the worker this job is ready to claim and process.
       const created = await createProject({
-        name: file.name,
+        name: files[0].name,
         ratio,
-        pipelineStatus: "queued",
+        pipelineStatus: "ingesting",
         progress: 0,
-        sourceKey: key,
+        sourceKey: firstKey,
         watermark: !billing.isWatermarkFree,
       });
+      createdProjectId = created.id;
       projectIdRef.current = created.id;
+
+      await createProjectClip({
+        projectId: created.id,
+        position: 0,
+        sourceKey: firstKey,
+        fileName: files[0].name,
+        duration: firstDuration,
+      });
+
+      for (let i = 1; i < files.length; i++) {
+        const duration = await readVideoDuration(files[i]);
+        const key = await uploadClipToR2(files[i]);
+        await createProjectClip({
+          projectId: created.id,
+          position: i,
+          sourceKey: key,
+          fileName: files[i].name,
+          duration,
+        });
+      }
+
+      // Every clip is uploaded and recorded — only now is this job actually ready for the worker.
+      await updateProject(created.id, { pipelineStatus: "queued" });
       setStatusMessage(null);
       setStatus("queued");
     } catch (err) {
+      // R2 objects already uploaded for earlier clips in this batch aren't deleted here — there's
+      // no delete-object capability anywhere in the current architecture (upload/download only
+      // ever presign PUT/GET), so removing one would mean adding new backend surface this step
+      // wasn't scoped to add. The project row (and any project_clips rows already attached to it
+      // via cascade) is rolled back, which is what keeps the *visible* project list and the
+      // worker's queue honest.
+      if (createdProjectId) deleteProject(createdProjectId).catch(() => {});
+      projectIdRef.current = null;
       setUploadError(err instanceof Error ? err.message : "Upload failed");
       setStatus("idle");
       setFileName(null);
@@ -300,7 +373,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
           progress={progress}
           statusMessage={statusMessage}
           errorMessage={errorMessage}
-          onFile={handleFile}
+          onFiles={handleFiles}
           onReset={handleReset}
           onDurationLoaded={setDuration}
         />

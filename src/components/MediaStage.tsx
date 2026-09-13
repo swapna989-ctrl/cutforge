@@ -24,7 +24,7 @@ export default function MediaStage({
   progress,
   statusMessage,
   errorMessage,
-  onFile,
+  onFiles,
   onReset,
   onDurationLoaded,
 }: {
@@ -37,7 +37,7 @@ export default function MediaStage({
   progress: number;
   statusMessage: string | null;
   errorMessage: string | null;
-  onFile: (file: File) => void;
+  onFiles: (files: File[]) => void;
   onReset: () => void;
   onDurationLoaded: (seconds: number) => void;
 }) {
@@ -66,18 +66,19 @@ export default function MediaStage({
         onDrop={(e) => {
           e.preventDefault();
           setDragOver(false);
-          const file = e.dataTransfer.files?.[0];
-          if (file) onFile(file);
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (files.length > 0) onFiles(files);
         }}
       >
         <input
           ref={inputRef}
           type="file"
           accept="video/*"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) onFile(file);
+            const files = Array.from(e.target.files ?? []);
+            if (files.length > 0) onFiles(files);
             e.target.value = "";
           }}
         />

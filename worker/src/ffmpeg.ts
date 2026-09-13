@@ -198,11 +198,48 @@ export async function cutSilences(
   );
 }
 
+// One shared target size per project ratio, used only to bring multiple clips of possibly
+// different native resolutions into an identical format before concatenation. Matches the
+// existing 1280-long-edge memory budget (see SCALE_FILTER's own comment) so multi-clip encodes
+// stay within the same measured-safe footprint as the single-clip path.
+const MULTI_CLIP_TARGET_DIMENSIONS: Record<"9:16" | "16:9", { width: number; height: number }> = {
+  "16:9": { width: 1280, height: 720 },
+  "9:16": { width: 720, height: 1280 },
+};
+
+export function multiClipTargetDimensions(ratio: "9:16" | "16:9"): { width: number; height: number } {
+  return MULTI_CLIP_TARGET_DIMENSIONS[ratio];
+}
+
 /**
- * Concatenates already-normalized clips (each already run through normalizeResolution, so all
- * share identical codec/resolution/fps) into one file, using the exact same concat-demuxer
- * pattern cutSilences uses to stitch its own "keep" segments back together. A single clip is
- * just copied through rather than re-encoded — there's nothing to join.
+ * Normalizes one clip to an EXACT, caller-specified resolution — unlike normalizeResolution
+ * (which scales each source relative to its own aspect ratio, so two differently-shaped
+ * sources can land on two different output sizes), every clip run through this function for
+ * the same project ends up with identical width/height/codec/pixel format/frame rate. That's
+ * what concatClips's stream-copy concat actually requires to be safe (confirmed by a real
+ * failure: two clips at 640x360 and 480x360 concatenated with exit code 0, but the output
+ * silently dropped the second clip's content entirely).
+ *
+ * Scales to cover the target box (`force_original_aspect_ratio=increase`), which can only ever
+ * grow past the box on one axis, never stretch either axis independently, then center-crops the
+ * overflow — chosen over letterboxing so mixed portrait/landscape clips fill the frame the same
+ * way a phone-shot reel or short does, rather than adding black bars.
+ */
+export function normalizeToTargetResolution(inputPath: string, outputPath: string, width: number, height: number): Promise<void> {
+  const filter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`;
+  return runFfmpeg(
+    ffmpeg(inputPath)
+      .inputOptions(DECODE_OPTS)
+      .outputOptions(["-vf", filter, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-pix_fmt", "yuv420p", "-c:a", "aac"]),
+    outputPath
+  );
+}
+
+/**
+ * Concatenates clips that have already been brought to an identical format (see
+ * normalizeToTargetResolution) into one file, using the exact same concat-demuxer pattern
+ * cutSilences uses to stitch its own "keep" segments back together. A single clip is just
+ * copied through rather than re-encoded — there's nothing to join.
  */
 export async function concatClips(inputPaths: string[], outputPath: string, tmpDir: string): Promise<void> {
   if (inputPaths.length === 1) {
@@ -217,6 +254,21 @@ export async function concatClips(inputPaths: string[], outputPath: string, tmpD
     ffmpeg().input(listPath).inputOptions(["-f", "concat", "-safe", "0"]).outputOptions(["-c", "copy"]),
     outputPath
   );
+
+  // The concat demuxer's stream-copy step silently corrupts/truncates a mismatched segment
+  // instead of erroring — ffmpeg exits 0 either way. Comparing the combined duration against
+  // the sum of the real inputs' own durations catches that class of failure (here, or any
+  // other cause) instead of trusting exit code 0 alone.
+  const [inputDurations, combinedDuration] = await Promise.all([
+    Promise.all(inputPaths.map((p) => getDuration(p))),
+    getDuration(outputPath),
+  ]);
+  const expectedDuration = inputDurations.reduce((sum, d) => sum + d, 0);
+  if (combinedDuration < expectedDuration * 0.9) {
+    throw new Error(
+      `Concatenated output (${combinedDuration.toFixed(2)}s) is far shorter than its ${inputPaths.length} inputs combined (${expectedDuration.toFixed(2)}s) — concatenation likely dropped a clip.`
+    );
+  }
 }
 
 export function extractAudio(inputPath: string, outputPath: string): Promise<void> {

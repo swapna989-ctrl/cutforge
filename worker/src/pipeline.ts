@@ -10,6 +10,8 @@ import {
   extractAudio,
   finalizeVideo,
   normalizeResolution,
+  normalizeToTargetResolution,
+  multiClipTargetDimensions,
   concatClips,
 } from "./ffmpeg.js";
 import { transcribeToSrt } from "./transcribe.js";
@@ -53,6 +55,11 @@ export async function processJob(job: ProjectRow): Promise<void> {
       // concatenate the normalized clips into exactly the kind of file normalizeResolution
       // itself would have produced — everything from here on is the existing pipeline,
       // completely unaware that its input came from more than one source file.
+      // Every clip must land on the exact same width/height/codec/pixel format/frame rate before
+      // concatClips can safely stream-copy them together — normalizeResolution alone doesn't
+      // guarantee that, since it scales each source relative to its own aspect ratio, so two
+      // differently-shaped clips can (and did, in testing) come out at two different sizes.
+      const target = multiClipTargetDimensions(job.ratio);
       const clipPaths: string[] = [];
       for (let i = 0; i < clips.length; i++) {
         const clip = clips[i];
@@ -64,7 +71,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
         const clipSourcePath = join(tmpDir, `clip-${i}-source.mp4`);
         const clipNormalizedPath = join(tmpDir, `clip-${i}-normalized.mp4`);
         await downloadToFile(clip.source_key, clipSourcePath);
-        await normalizeResolution(clipSourcePath, clipNormalizedPath);
+        await normalizeToTargetResolution(clipSourcePath, clipNormalizedPath, target.width, target.height);
         clipPaths.push(clipNormalizedPath);
       }
 
