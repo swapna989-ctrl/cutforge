@@ -64,7 +64,7 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
     ? { text: "Failed", cls: "bg-[#EF4444]/10 text-[#EF4444]" }
     : isReady
       ? { text: "Ready", cls: "bg-[#10B981]/10 text-[#10B981]" }
-      : { text: "Processing…", cls: "bg-[#F59E0B]/15 text-[#F59E0B]" };
+      : { text: `Processing… ${project.progress}%`, cls: "bg-[#F59E0B]/15 text-[#F59E0B]" };
 
   // Only a finished project (ready or failed) has anywhere real to go — a still-processing one
   // has no clips yet, so it stays put on this page and its progress bar below is the loading
@@ -77,8 +77,13 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
         {thumbSrc ? (
           <video src={thumbSrc} muted playsInline preload="metadata" className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            {!isReady && !isFailed && <div className="w-6 h-6 rounded-full border-2 border-[#ECE5E6] border-t-[#ed8395] animate-spin" />}
+          <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+            {!isReady && !isFailed && (
+              <>
+                <div className="w-6 h-6 rounded-full border-2 border-[#ECE5E6] border-t-[#ed8395] animate-spin" />
+                <span className="text-xs font-semibold text-[#B3ACA6]">{project.progress}%</span>
+              </>
+            )}
             {isFailed && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">error_outline</span>}
             {isReady && !thumbSrc && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">movie</span>}
           </div>
