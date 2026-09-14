@@ -19,8 +19,11 @@ insert into public.plan_tier_config (tier, monthly_credits, rollover_cap) values
   ('agency', 120, 240)
 on conflict (tier) do update set monthly_credits = excluded.monthly_credits, rollover_cap = excluded.rollover_cap;
 
--- No RLS needed — this is read-only reference data, not per-user, and only referenced from
--- inside SECURITY DEFINER functions below, never queried directly by the client.
+-- Read-only reference data, not per-user, only ever read from inside the SECURITY DEFINER
+-- functions below (which bypass RLS) — enabled with zero policies purely to keep this off the
+-- public REST endpoint Supabase auto-generates for every table, not because any client needs
+-- row-level filtering on it.
+alter table public.plan_tier_config enable row level security;
 
 alter table public.billing add column if not exists plan_tier text not null default 'none'
   check (plan_tier in ('none', 'starter', 'creator', 'agency'));
