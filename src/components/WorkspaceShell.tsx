@@ -30,7 +30,7 @@ export default function WorkspaceShell({ status, children }: { status: PipelineS
           <span className={`text-[11px] font-mono uppercase tracking-wide shrink-0 ${statusLabel.cls}`}>{statusLabel.text}</span>
         </div>
 
-        <div className="px-4 sm:px-6 py-3 border-t border-[#E8E2D6]/60">
+        <div className="px-4 sm:px-6 py-3">
           <Link
             href="/clipping"
             className="flex items-center gap-2 text-base text-[#1d1b1e] hover:text-[#A8724A] transition-colors w-fit"
