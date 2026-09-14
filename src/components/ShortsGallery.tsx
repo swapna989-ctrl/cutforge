@@ -82,6 +82,7 @@ function ShortCard({
 }) {
   const isReady = short.status === "ready";
   const videoSrc = useShortVideoUrl(projectId, short);
+  const [videoLoaded, setVideoLoaded] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const meta = STATUS_META[short.status];
@@ -121,10 +122,22 @@ function ShortCard({
       }`}
     >
       <div className="relative w-full aspect-[9/16] bg-[#FAF8F7] overflow-hidden">
-        {videoSrc ? (
-          <video src={videoSrc} muted playsInline preload="metadata" className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
+        {/* The video element starts loading as soon as videoSrc is known (so it's ready sooner),
+            but stays hidden behind the placeholder until it actually has a real frame to show —
+            a <video> with no poster renders a solid black frame while it's still buffering, which
+            otherwise flashes on top of this same light placeholder we just fixed the color of. */}
+        {videoSrc && (
+          <video
+            src={videoSrc}
+            muted
+            playsInline
+            preload="metadata"
+            onLoadedData={() => setVideoLoaded(true)}
+            className="w-full h-full object-cover"
+          />
+        )}
+        {(!videoSrc || !videoLoaded) && (
+          <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-[#FAF8F7]">
             {short.status === "failed" ? (
               <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">error_outline</span>
             ) : (
