@@ -18,6 +18,13 @@ function resolveBinaryPath(): string {
   return join(BIN_DIR, asset);
 }
 
+// Generous enough for a real slow-but-working download (the first request for a given video can
+// take several minutes — YouTube's own extraction/anti-bot overhead, confirmed against a real
+// video: ~90s+ cold, ~16s once yt-dlp's cache is warm) while still bounding the worst case. This
+// worker processes one job at a time, so a download that hangs for real (network stall, an
+// interactive prompt yt-dlp is silently waiting on) would otherwise block it forever.
+const DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
+
 function runYtDlp(url: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const binaryPath = resolveBinaryPath();
@@ -41,7 +48,7 @@ function runYtDlp(url: string, outputPath: string): Promise<void> {
       outputPath,
     ];
 
-    const proc = spawn(binaryPath, args);
+    const proc = spawn(binaryPath, args, { timeout: DOWNLOAD_TIMEOUT_MS, killSignal: "SIGKILL" });
     const stderrTail: string[] = [];
     proc.stderr.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString().split("\n")) {
@@ -51,11 +58,22 @@ function runYtDlp(url: string, outputPath: string): Promise<void> {
       }
     });
 
-    proc.on("close", (code) => {
+    let timedOut = false;
+    proc.on("close", (code, signal) => {
       if (code === 0) return resolve();
+      if (signal === "SIGKILL" && timedOut) {
+        return reject(new Error(`yt-dlp timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s\nstderr tail:\n${stderrTail.join("\n")}`));
+      }
       reject(new Error(`yt-dlp exited with code ${code}\nstderr tail:\n${stderrTail.join("\n")}`));
     });
     proc.on("error", reject);
+
+    // Node's own `timeout` option (set above) sends killSignal after the deadline but reports it
+    // to `close` as a plain signal — this flag is what turns that into a distinguishable, clearly
+    // labeled timeout error instead of an opaque "exited with code null".
+    setTimeout(() => {
+      timedOut = true;
+    }, DOWNLOAD_TIMEOUT_MS).unref();
   });
 }
 
