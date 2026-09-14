@@ -1,6 +1,0 @@
-# Adds Deno to the build/runtime image alongside Nixpacks' auto-detected Node setup. yt-dlp
-# looks for `deno` on PATH by default to solve YouTube's "n challenge" (a JS-based throttling
-# bypass required for some videos/formats) — without it, extraction fails outright for those
-# videos even with valid cookies. See https://github.com/yt-dlp/yt-dlp/wiki/EJS.
-[phases.setup]
-nixPkgs = ["deno"]

@@ -1,0 +1,13 @@
+# Railway builds this service with Railpack (not Nixpacks — confirmed from its own build logs,
+# which show "load build definition from ./railpack-plan.json"), which installs extra CLI tools
+# via mise config files like this one rather than a nixpacks.toml. Adds Deno alongside Node —
+# yt-dlp looks for `deno` on PATH by default to solve YouTube's "n challenge" (a JS-based
+# throttling bypass some videos require); without it, extraction fails outright for those videos
+# even with valid cookies. See https://github.com/yt-dlp/yt-dlp/wiki/EJS.
+#
+# `node` is listed explicitly too, even though Railpack already auto-detects it from
+# package.json — it's not documented whether a custom mise.toml merges with or replaces that
+# auto-detection, so this removes the ambiguity rather than risk silently dropping Node.
+[tools]
+node = "latest"
+deno = "latest"
