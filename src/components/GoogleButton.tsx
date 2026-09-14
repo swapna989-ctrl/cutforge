@@ -19,7 +19,7 @@ export default function GoogleButton() {
       <button
         type="button"
         onClick={handleClick}
-        className="w-full flex items-center justify-center space-x-2.5 py-2.5 rounded-full text-xs font-medium border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-all text-zinc-200 cursor-pointer"
+        className="w-full flex items-center justify-center space-x-2.5 py-2.5 rounded-full text-sm font-medium border border-[#ECE5E6] bg-white hover:bg-[#FAF8F7] transition-all text-[#1d1b1e] cursor-pointer"
       >
         <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
           <path
@@ -41,7 +41,7 @@ export default function GoogleButton() {
         </svg>
         <span>Continue with Google</span>
       </button>
-      {error && <p className="text-[11px] text-red-400 text-center mt-2">{error}</p>}
+      {error && <p className="text-xs text-[#B0503E] text-center mt-2">{error}</p>}
     </div>
   );
 }

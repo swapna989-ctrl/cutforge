@@ -2,10 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import WorkspaceShell from "@/components/WorkspaceShell";
-import MediaStage from "@/components/MediaStage";
+import MediaStage, { type ClipStripItem } from "@/components/MediaStage";
 import ExportPanel, { type ExportSnapshot } from "@/components/ExportPanel";
 import type { PipelineStatus, Ratio } from "@/lib/pipeline";
-import { createProject, createProjectClip, updateProject, deleteProject, getProject, type Project } from "@/lib/projects";
+import {
+  createProject,
+  createProjectClip,
+  updateProjectClip,
+  deleteProjectClip,
+  listProjectClips,
+  updateProject,
+  deleteProject,
+  getProject,
+  type Project,
+} from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 
@@ -57,6 +67,9 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   // Tracks the current local blob: URL so it can be revoked (avoids leaking memory) whenever
   // it's replaced or the component unmounts — the browser never frees these on its own.
   const localPreviewUrlRef = useRef<string | null>(null);
+  // Every per-clip blob: URL created for the clip strip's thumbnails, so they can all be
+  // revoked together on reset/unmount the same way localPreviewUrlRef is.
+  const clipPreviewUrlsRef = useRef<string[]>([]);
 
   const [ratio, setRatio] = useState<Ratio>(initialProject?.ratio ?? "9:16");
 
@@ -69,6 +82,11 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   const [errorMessage, setErrorMessage] = useState<string | null>(initialProject?.errorMessage ?? null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [clips, setClips] = useState<ClipStripItem[]>([]);
+  // True once every selected clip is uploaded and recorded, but before the user has confirmed
+  // processing — the window remove/replace/add operate in. The project's own pipeline_status
+  // stays "ingesting" throughout (no schema change needed); this is purely local UI state.
+  const [reviewing, setReviewing] = useState(false);
 
   // The footage the preview actually plays: the user's own just-picked file until the real
   // master exists, then the real rendered output — never a decorative stand-in for either.
@@ -88,11 +106,39 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to prefs becoming ready, not every prefs change
   }, [prefsReady]);
 
-  // Revoke the local blob: URL whenever it's replaced or the workspace unmounts.
+  // Revoke the local blob: URLs whenever the workspace unmounts.
   useEffect(() => {
     return () => {
       if (localPreviewUrlRef.current) URL.revokeObjectURL(localPreviewUrlRef.current);
+      clipPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     };
+  }, []);
+
+  // Resuming an existing project: fetch its real clips so the strip reflects what's actually
+  // there. No local File objects exist in this case, so thumbnails fall back to a plain icon
+  // (see ClipStripItem) rather than inventing a preview. A project from before multi-clip
+  // support has no project_clips rows at all — fall back to one item built from the project's
+  // own name so it still shows *something*, matching what used to be displayed here. A project
+  // still sitting at "ingesting" (selected and uploaded, but Process was never clicked before
+  // the user navigated away) drops back into the same review tray instead of silently losing it.
+  useEffect(() => {
+    if (!initialProject) return;
+    let cancelled = false;
+    listProjectClips(initialProject.id)
+      .then((rows) => {
+        if (cancelled) return;
+        if (rows.length > 0) {
+          setClips(rows.map((r) => ({ id: r.id, fileName: r.fileName, position: r.position, previewUrl: null })));
+          if (initialProject.pipelineStatus === "ingesting") setReviewing(true);
+        } else if (initialProject.pipelineStatus !== "ingesting") {
+          setClips([{ id: "legacy", fileName: initialProject.name, position: 0, previewUrl: null }]);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only ever runs for the project this workspace was opened with
   }, []);
 
   // Fetches a real, playable URL for the finished master — the same endpoint the download
@@ -151,9 +197,9 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     if (files.length === 0) return;
 
     // Shows the user's real footage immediately, entirely client-side — no need to wait for
-    // upload or processing to see the actual clip they just picked. The visible preview/strip
-    // still reflects only the first clip; the media strip and timeline aren't being redesigned
-    // in this step, so multi-clip footage isn't shown yet even though it's all being uploaded.
+    // upload or processing to see the actual clip they just picked. The big preview above the
+    // strip still only ever plays the first clip (or, once ready, the real rendered master) —
+    // this isn't a multi-clip editor yet, just an accurate view of what's been uploaded.
     if (localPreviewUrlRef.current) URL.revokeObjectURL(localPreviewUrlRef.current);
     const objectUrl = URL.createObjectURL(files[0]);
     localPreviewUrlRef.current = objectUrl;
@@ -162,8 +208,12 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setFileSizeBytes(files[0].size);
     setFileName(files[0].name);
     setStatus("ingesting");
+    setReviewing(false);
     setUploadError(null);
     setErrorMessage(null);
+    clipPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    clipPreviewUrlsRef.current = [];
+    setClips([]);
 
     // Tracks the project row so a failure partway through can roll it back (cascade-deletes
     // any project_clips rows already inserted) instead of leaving a half-uploaded draft behind.
@@ -175,8 +225,9 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
 
       // The first clip creates the project, exactly like the single-file flow always has —
       // source_key is still populated from it, so anything reading that column directly keeps
-      // working. Left at "ingesting" rather than "queued" until every clip has actually landed,
-      // since "queued" is what tells the worker this job is ready to claim and process.
+      // working. Left at "ingesting" rather than "queued" — "queued" is what tells the worker
+      // this job is ready to claim, and it should only get that once the user actually confirms
+      // via Process, not the instant every file happens to finish uploading.
       const created = await createProject({
         name: files[0].name,
         ratio,
@@ -188,30 +239,36 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       createdProjectId = created.id;
       projectIdRef.current = created.id;
 
-      await createProjectClip({
+      const firstRow = await createProjectClip({
         projectId: created.id,
         position: 0,
         sourceKey: firstKey,
         fileName: files[0].name,
         duration: firstDuration,
       });
+      const firstPreviewUrl = URL.createObjectURL(files[0]);
+      clipPreviewUrlsRef.current.push(firstPreviewUrl);
+      setClips([{ id: firstRow.id, fileName: files[0].name, position: 0, previewUrl: firstPreviewUrl }]);
 
       for (let i = 1; i < files.length; i++) {
-        const duration = await readVideoDuration(files[i]);
+        const clipDuration = await readVideoDuration(files[i]);
         const key = await uploadClipToR2(files[i]);
-        await createProjectClip({
+        const row = await createProjectClip({
           projectId: created.id,
           position: i,
           sourceKey: key,
           fileName: files[i].name,
-          duration,
+          duration: clipDuration,
         });
+        const previewUrl = URL.createObjectURL(files[i]);
+        clipPreviewUrlsRef.current.push(previewUrl);
+        setClips((prev) => [...prev, { id: row.id, fileName: files[i].name, position: i, previewUrl }]);
       }
 
-      // Every clip is uploaded and recorded — only now is this job actually ready for the worker.
-      await updateProject(created.id, { pipelineStatus: "queued" });
+      // Every clip is uploaded and recorded — hand it to the user to review before anything
+      // is queued for the worker.
       setStatusMessage(null);
-      setStatus("queued");
+      setReviewing(true);
     } catch (err) {
       // R2 objects already uploaded for earlier clips in this batch aren't deleted here — there's
       // no delete-object capability anywhere in the current architecture (upload/download only
@@ -221,9 +278,136 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       // worker's queue honest.
       if (createdProjectId) deleteProject(createdProjectId).catch(() => {});
       projectIdRef.current = null;
+      clipPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      clipPreviewUrlsRef.current = [];
+      setClips([]);
+      setReviewing(false);
       setUploadError(err instanceof Error ? err.message : "Upload failed");
       setStatus("idle");
       setFileName(null);
+    }
+  }
+
+  /** Confirms the current clip selection and hands the job to the worker. */
+  async function handleProcess() {
+    const id = projectIdRef.current;
+    if (!id || clips.length === 0) return;
+    try {
+      await updateProject(id, { pipelineStatus: "queued" });
+      setReviewing(false);
+      setStatusMessage(null);
+      setStatus("queued");
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Could not start processing");
+    }
+  }
+
+  /** Removes one clip from the current (not-yet-processed) selection and closes the gap in
+   *  position order. Purely a selection edit — nothing here touches the worker or the queue. */
+  async function handleRemoveClip(position: number) {
+    const target = clips.find((c) => c.position === position);
+    if (!target) return;
+
+    if (target.previewUrl) {
+      URL.revokeObjectURL(target.previewUrl);
+      clipPreviewUrlsRef.current = clipPreviewUrlsRef.current.filter((u) => u !== target.previewUrl);
+    }
+
+    const remaining = clips.filter((c) => c.id !== target.id).sort((a, b) => a.position - b.position);
+
+    if (remaining.length === 0) {
+      // Nothing left to process — the same as abandoning this draft entirely.
+      handleReset();
+      return;
+    }
+
+    const renumbered = remaining.map((c, i) => ({ ...c, position: i }));
+    setClips(renumbered);
+    setFileName(renumbered[0].fileName);
+    setLocalPreviewUrl(renumbered[0].previewUrl);
+    setDuration(null);
+
+    try {
+      await deleteProjectClip(target.id);
+      // Ascending order of the NEW position is always collision-safe here: removing one clip
+      // only ever shifts the remaining ones to an equal-or-lower position, so by the time a row
+      // is asked to take position N, whichever row used to hold N has already moved off it.
+      for (const clip of renumbered) {
+        await updateProjectClip(clip.id, { position: clip.position });
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Could not remove clip");
+    }
+  }
+
+  /** Swaps the file behind one existing clip slot, keeping its position. Uses the same
+   *  upload-url + PUT flow as initial selection — no new upload path. */
+  async function handleReplaceClip(position: number, file: File) {
+    const target = clips.find((c) => c.position === position);
+    if (!target) return;
+
+    let clipDuration: number | null;
+    let key: string;
+    try {
+      clipDuration = await readVideoDuration(file);
+      key = await uploadClipToR2(file);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Could not upload replacement clip");
+      return;
+    }
+
+    try {
+      await updateProjectClip(target.id, { sourceKey: key, fileName: file.name, duration: clipDuration });
+      // Position 0 backs projects.source_key too (kept for backward compatibility with anything
+      // still reading it directly) — keep it in sync with what's actually in that slot now.
+      if (position === 0 && projectIdRef.current) {
+        await updateProject(projectIdRef.current, { sourceKey: key });
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Could not replace clip");
+      return;
+    }
+
+    const newPreviewUrl = URL.createObjectURL(file);
+    if (target.previewUrl) {
+      URL.revokeObjectURL(target.previewUrl);
+      clipPreviewUrlsRef.current = clipPreviewUrlsRef.current.filter((u) => u !== target.previewUrl);
+    }
+    clipPreviewUrlsRef.current.push(newPreviewUrl);
+    setClips((prev) => prev.map((c) => (c.id === target.id ? { ...c, fileName: file.name, previewUrl: newPreviewUrl } : c)));
+
+    if (position === 0) {
+      setFileName(file.name);
+      setFileSizeBytes(file.size);
+      setDuration(clipDuration);
+      setLocalPreviewUrl(newPreviewUrl);
+    }
+  }
+
+  /** Appends newly picked files to the end of the current selection, same upload path as the
+   *  initial selection. */
+  async function handleAddClips(files: File[]) {
+    const id = projectIdRef.current;
+    if (!id || files.length === 0) return;
+    let nextPosition = clips.length;
+    for (const file of files) {
+      // A fresh const per iteration, not the shared `nextPosition` counter itself — setClips's
+      // updater below runs later, once React actually applies it, and by then a *shared* mutable
+      // variable would already reflect a later iteration's incremented value. Capturing it here
+      // pins each clip to the value that was actually true when it was added.
+      const clipPosition = nextPosition;
+      nextPosition += 1;
+      try {
+        const clipDuration = await readVideoDuration(file);
+        const key = await uploadClipToR2(file);
+        const row = await createProjectClip({ projectId: id, position: clipPosition, sourceKey: key, fileName: file.name, duration: clipDuration });
+        const previewUrl = URL.createObjectURL(file);
+        clipPreviewUrlsRef.current.push(previewUrl);
+        setClips((prev) => [...prev, { id: row.id, fileName: file.name, position: clipPosition, previewUrl }]);
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "Could not add clip");
+        break;
+      }
     }
   }
 
@@ -238,6 +422,10 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       URL.revokeObjectURL(localPreviewUrlRef.current);
       localPreviewUrlRef.current = null;
     }
+    clipPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    clipPreviewUrlsRef.current = [];
+    setClips([]);
+    setReviewing(false);
     setStatus("idle");
     setFileName(null);
     setFileSizeBytes(null);
@@ -338,11 +526,11 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     <WorkspaceShell projectName={fileName} status={status}>
       <div className="space-y-5">
         <div className="flex items-center justify-between">
-          <div className="inline-flex items-center p-1 rounded-full bg-[#141418] border border-white/10 shadow-inner">
+          <div className="inline-flex items-center p-1 rounded-full bg-[#F5F1EA] border border-[#E8E2D6] shadow-inner">
             <button
               onClick={() => handleSetRatio("9:16")}
               className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
-                ratio === "9:16" ? "bg-[#fbf6ee] text-[#08080a] shadow-[0_0_16px_rgba(244,213,141,0.35)] font-semibold" : "text-zinc-400 hover:text-white"
+                ratio === "9:16" ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
               }`}
             >
               <span className="material-symbols-outlined text-[14px]">stay_current_portrait</span>
@@ -351,7 +539,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
             <button
               onClick={() => handleSetRatio("16:9")}
               className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
-                ratio === "16:9" ? "bg-[#fbf6ee] text-[#08080a] shadow-[0_0_16px_rgba(244,213,141,0.35)] font-semibold" : "text-zinc-400 hover:text-white"
+                ratio === "16:9" ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
               }`}
             >
               <span className="material-symbols-outlined text-[14px]">crop_16_9</span>
@@ -360,8 +548,8 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
           </div>
         </div>
 
-        {uploadError && <p className="text-center text-xs text-red-400 font-mono">{uploadError}</p>}
-        {downloadError && <p className="text-center text-xs text-red-400 font-mono">{downloadError}</p>}
+        {uploadError && <p className="text-center text-xs text-[#B0503E] font-mono">{uploadError}</p>}
+        {downloadError && <p className="text-center text-xs text-[#B0503E] font-mono">{downloadError}</p>}
 
         <MediaStage
           ratio={ratio}
@@ -373,9 +561,15 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
           progress={progress}
           statusMessage={statusMessage}
           errorMessage={errorMessage}
+          clips={clips}
+          reviewing={reviewing}
           onFiles={handleFiles}
           onReset={handleReset}
           onDurationLoaded={setDuration}
+          onRemoveClip={handleRemoveClip}
+          onReplaceClip={handleReplaceClip}
+          onAddClips={handleAddClips}
+          onProcess={handleProcess}
         />
 
         <ExportPanel
