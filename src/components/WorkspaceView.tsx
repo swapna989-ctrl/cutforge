@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import MediaStage, { type ClipStripItem } from "@/components/MediaStage";
 import ExportPanel, { type ExportSnapshot } from "@/components/ExportPanel";
+import ShortsGallery from "@/components/ShortsGallery";
 import type { PipelineStatus, Ratio } from "@/lib/pipeline";
 import {
   createProject,
@@ -14,50 +15,13 @@ import {
   updateProject,
   deleteProject,
   getProject,
+  listShorts,
   type Project,
+  type Short,
 } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
-
-/** Reads a File's real duration off a throwaway (never-rendered) video element — the same
- *  technique MediaStage already uses for the visible preview, just off-DOM so every uploaded
- *  clip (not only the one currently shown) can have its real duration recorded. Null, not
- *  invented, when a browser genuinely can't report it (e.g. certain webm files). */
-function readVideoDuration(file: File): Promise<number | null> {
-  return new Promise((resolve) => {
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    const url = URL.createObjectURL(file);
-    video.src = url;
-    video.onloadedmetadata = () => {
-      URL.revokeObjectURL(url);
-      resolve(Number.isFinite(video.duration) ? video.duration : null);
-    };
-    video.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve(null);
-    };
-  });
-}
-
-/** Requests a presigned R2 upload URL for one file and PUTs it there, returning the object key. */
-async function uploadClipToR2(file: File): Promise<string> {
-  const urlRes = await fetch("/api/upload-url", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileName: file.name, contentType: file.type || "video/mp4" }),
-  });
-  if (!urlRes.ok) {
-    const body = await urlRes.json().catch(() => null);
-    throw new Error(body?.error ?? "Could not prepare upload");
-  }
-  const { uploadUrl, key } = (await urlRes.json()) as { uploadUrl: string; key: string };
-
-  const putRes = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "video/mp4" } });
-  if (!putRes.ok) throw new Error("Upload to storage failed");
-
-  return key;
-}
+import { readVideoDuration, uploadClipToR2 } from "@/lib/upload";
 
 export default function WorkspaceView({ initialProject }: { initialProject?: Project }) {
   const { prefs, ready: prefsReady } = usePrefs();
@@ -96,6 +60,12 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "done">("idle");
   const [exportSnapshot, setExportSnapshot] = useState<ExportSnapshot | null>(null);
   const downloadInFlightRef = useRef(false);
+
+  // The AI Clip Planner's real output for this project — populated once the pipeline finishes.
+  // A "ready" project with zero shorts is a legacy single-output project from before the planner
+  // existed; that case keeps falling through to the MediaStage/ExportPanel preview below exactly
+  // as it did before this existed.
+  const [shorts, setShorts] = useState<Short[]>([]);
 
   // Pick up the user's saved default ratio for brand-new (non-resumed) projects, once prefs load.
   useEffect(() => {
@@ -160,6 +130,23 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       cancelled = true;
     };
   }, [status, realPreviewUrl]);
+
+  // Fetches the real shorts the worker planned and rendered for this project, once it's ready.
+  // Covers both the live "just finished" transition and resuming an already-ready project.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const id = projectIdRef.current;
+    if (!id) return;
+    let cancelled = false;
+    listShorts(id)
+      .then((rows) => {
+        if (!cancelled) setShorts(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [status]);
 
   // Poll the real project row while a worker could plausibly be acting on it. The worker
   // processes jobs in the background regardless of whether anyone's watching, so this is
@@ -432,6 +419,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setDuration(null);
     setLocalPreviewUrl(null);
     setRealPreviewUrl(null);
+    setShorts([]);
     setProgress(0);
     setStatusMessage(null);
     setErrorMessage(null);
@@ -551,34 +539,40 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         {uploadError && <p className="text-center text-xs text-[#B0503E] font-mono">{uploadError}</p>}
         {downloadError && <p className="text-center text-xs text-[#B0503E] font-mono">{downloadError}</p>}
 
-        <MediaStage
-          ratio={ratio}
-          status={status}
-          fileName={fileName}
-          fileSizeBytes={fileSizeBytes}
-          duration={duration}
-          previewSrc={realPreviewUrl ?? localPreviewUrl}
-          progress={progress}
-          statusMessage={statusMessage}
-          errorMessage={errorMessage}
-          clips={clips}
-          reviewing={reviewing}
-          onFiles={handleFiles}
-          onReset={handleReset}
-          onDurationLoaded={setDuration}
-          onRemoveClip={handleRemoveClip}
-          onReplaceClip={handleReplaceClip}
-          onAddClips={handleAddClips}
-          onProcess={handleProcess}
-        />
+        {status === "ready" && shorts.length > 0 ? (
+          <ShortsGallery projectId={projectIdRef.current!} projectName={fileName} shorts={shorts} onShortsChange={setShorts} />
+        ) : (
+          <>
+            <MediaStage
+              ratio={ratio}
+              status={status}
+              fileName={fileName}
+              fileSizeBytes={fileSizeBytes}
+              duration={duration}
+              previewSrc={realPreviewUrl ?? localPreviewUrl}
+              progress={progress}
+              statusMessage={statusMessage}
+              errorMessage={errorMessage}
+              clips={clips}
+              reviewing={reviewing}
+              onFiles={handleFiles}
+              onReset={handleReset}
+              onDurationLoaded={setDuration}
+              onRemoveClip={handleRemoveClip}
+              onReplaceClip={handleReplaceClip}
+              onAddClips={handleAddClips}
+              onProcess={handleProcess}
+            />
 
-        <ExportPanel
-          status={status}
-          downloadState={downloadState}
-          exportSnapshot={exportSnapshot}
-          onReEdit={handleReset}
-          onDownload={handleDownload}
-        />
+            <ExportPanel
+              status={status}
+              downloadState={downloadState}
+              exportSnapshot={exportSnapshot}
+              onReEdit={handleReset}
+              onDownload={handleDownload}
+            />
+          </>
+        )}
       </div>
     </WorkspaceShell>
   );

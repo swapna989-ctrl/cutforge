@@ -9,8 +9,32 @@ export async function GET(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  const projectId = new URL(request.url).searchParams.get("projectId");
+  const url = new URL(request.url);
+  const projectId = url.searchParams.get("projectId");
+  const shortId = url.searchParams.get("shortId");
   if (!projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
+
+  if (shortId) {
+    // RLS (select_own_shorts, via a join to projects.user_id) already scopes this to the
+    // caller's own row — no extra ownership check needed here.
+    const { data: short, error } = await supabase
+      .from("shorts")
+      .select("output_key, hook, position")
+      .eq("id", shortId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!short?.output_key) return NextResponse.json({ error: "This short isn't ready yet" }, { status: 404 });
+
+    const baseName = (short.hook || `cutforge-short-${short.position + 1}`)
+      .replace(/[/\\?%*:|"<>]/g, "")
+      .trim()
+      .slice(0, 60) || `cutforge-short-${short.position + 1}`;
+    const filename = `${baseName}.mp4`;
+
+    const downloadUrl = await getDownloadUrl(short.output_key, filename);
+    return NextResponse.json({ downloadUrl });
+  }
 
   // RLS (select_own_projects) already scopes this to the caller's own row — no extra
   // ownership check needed here.

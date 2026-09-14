@@ -1,0 +1,400 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { deleteShort, type Short } from "@/lib/projects";
+
+function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Zero-padded minutes, matching the "[03:04 - 04:40]" bracket style — these are positions in the
+// *source* video (sourceStartSeconds/sourceEndSeconds), not the short's own (much shorter) length.
+function formatClockTime(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+const STATUS_META: Record<Short["status"], { text: string; dot: string }> = {
+  pending: { text: "Queued", dot: "bg-[#B0A996]" },
+  processing: { text: "Rendering…", dot: "bg-[#F59E0B]" },
+  ready: { text: "Ready", dot: "bg-[#10B981]" },
+  failed: { text: "Failed", dot: "bg-[#EF4444]" },
+};
+
+/** Lazily fetches the real rendered short's playable URL — same presigned-URL pattern used
+ *  everywhere else in the app. Shared by both the grid thumbnail and the detail modal so neither
+ *  duplicates the fetch. */
+function useShortVideoUrl(projectId: string, short: Short): string | null {
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    if (short.status !== "ready") return;
+    fetch(`/api/download-url?projectId=${projectId}&shortId=${short.id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { downloadUrl: string } | null) => {
+        if (!cancelledRef.current && body?.downloadUrl) setVideoSrc(body.downloadUrl);
+      })
+      .catch(() => {});
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, [projectId, short.id, short.status]);
+
+  return videoSrc;
+}
+
+async function downloadShort(projectId: string, shortId: string): Promise<void> {
+  // Opened synchronously so Safari still treats the later redirect as user-initiated — same
+  // technique WorkspaceView's own download button uses.
+  const downloadWindow = window.open("", "_blank");
+  try {
+    const res = await fetch(`/api/download-url?projectId=${projectId}&shortId=${shortId}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error ?? "Could not prepare download");
+    }
+    const { downloadUrl } = (await res.json()) as { downloadUrl: string };
+    if (downloadWindow) downloadWindow.location.href = downloadUrl;
+    else window.location.href = downloadUrl;
+  } catch (err) {
+    downloadWindow?.close();
+    throw err;
+  }
+}
+
+function ShortCard({
+  projectId,
+  short,
+  onOpen,
+  onDeleted,
+}: {
+  projectId: string;
+  short: Short;
+  onOpen: () => void;
+  onDeleted: (id: string) => void;
+}) {
+  const isReady = short.status === "ready";
+  const videoSrc = useShortVideoUrl(projectId, short);
+  const [downloading, setDownloading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const meta = STATUS_META[short.status];
+  const clipSeconds = short.sourceEndSeconds - short.sourceStartSeconds;
+
+  async function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (downloading || !isReady) return;
+    setDownloading(true);
+    try {
+      await downloadShort(projectId, short.id);
+    } catch {
+      // Surfaced in the detail modal if they open it; the grid card stays compact.
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (deleting) return;
+    if (!window.confirm("Delete this short? This can't be undone.")) return;
+    setDeleting(true);
+    try {
+      await deleteShort(short.id);
+      onDeleted(short.id);
+    } catch {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <article
+      onClick={onOpen}
+      className={`bg-white border border-[#ECE5E6] rounded-2xl overflow-hidden shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] cursor-pointer transition-shadow hover:shadow-[0_12px_32px_-6px_rgba(42,39,42,0.08)] ${
+        deleting ? "opacity-40 pointer-events-none" : ""
+      }`}
+    >
+      <div className="relative w-full aspect-[9/16] bg-[#332f32] overflow-hidden">
+        {videoSrc ? (
+          <video src={videoSrc} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            {short.status === "failed" ? (
+              <span className="material-symbols-outlined text-white/30 text-2xl">error_outline</span>
+            ) : (
+              <div className="w-5 h-5 rounded-full border-2 border-white/20 border-t-[#ed8395] animate-spin" />
+            )}
+          </div>
+        )}
+        <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white px-2 py-0.5 rounded-full text-[10px] font-semibold">
+          {formatDuration(clipSeconds)}
+        </div>
+      </div>
+
+      <div className="p-3 flex flex-col gap-2">
+        <h3 className="text-[13px] font-semibold text-[#1d1b1e] leading-snug line-clamp-2">{short.hook}</h3>
+
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            disabled
+            title="Direct publishing is coming soon"
+            className="w-full flex items-center justify-center gap-1.5 bg-[#fdd5e1]/60 text-[#9a4153]/50 py-2 rounded-full text-xs font-semibold cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined text-[14px]">send</span>
+            Post
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={!isReady || downloading}
+            className="w-full flex items-center justify-center gap-1.5 bg-[#1d1b1e] hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white py-2 rounded-full text-xs font-semibold transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[14px]">download</span>
+            {downloading ? "…" : "Download HD"}
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between pt-1.5 border-t border-[#ECE5E6]">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              disabled
+              title="Caption editing is coming soon"
+              className="w-7 h-7 rounded-lg bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-[15px]">edit_note</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              disabled
+              title="Cropping is coming soon"
+              className="w-7 h-7 rounded-lg bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-[15px]">crop</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              title="Delete short"
+              className="w-7 h-7 rounded-lg bg-[#fdd5e1]/60 hover:bg-[#fdd5e1] text-[#9a4153] flex items-center justify-center transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[15px]">{deleting ? "hourglass_empty" : "delete_outline"}</span>
+            </button>
+          </div>
+          <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} title={meta.text} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** The modal view a clicked short opens into — mirrors the real product's pattern of a detail
+ *  overlay rather than a separate page, with a "Scene analysis" section built from data the
+ *  clip planner already produced (the real source timestamp range + its real reasoning, stored
+ *  as `caption`) instead of inventing a new field for it. */
+function ShortDetailModal({
+  projectId,
+  short,
+  onClose,
+  onDeleted,
+}: {
+  projectId: string;
+  short: Short;
+  onClose: () => void;
+  onDeleted: (id: string) => void;
+}) {
+  const isReady = short.status === "ready";
+  const videoSrc = useShortVideoUrl(projectId, short);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDownload() {
+    if (downloading || !isReady) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await downloadShort(projectId, short.id);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (deleting) return;
+    if (!window.confirm("Delete this short? This can't be undone.")) return;
+    setDeleting(true);
+    try {
+      await deleteShort(short.id);
+      onDeleted(short.id);
+      onClose();
+    } catch {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-50" onClick={onClose} />
+      <div className="fixed inset-x-4 top-[4%] bottom-[4%] sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-[420px] bg-white rounded-3xl z-50 overflow-y-auto shadow-[0_24px_64px_-12px_rgba(42,39,42,0.3)]">
+        <div className="p-5">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <h2 className="text-base font-semibold text-[#1d1b1e] leading-snug">{short.hook}</h2>
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#7B7579] hover:bg-[#FAF8F7] transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
+
+          <div className="relative w-full aspect-[9/16] max-h-[50vh] rounded-2xl overflow-hidden bg-black mb-4">
+            {videoSrc ? (
+              <video src={videoSrc} controls playsInline className="w-full h-full object-contain bg-black" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                {short.status === "failed" ? (
+                  <span className="material-symbols-outlined text-white/30 text-3xl">error_outline</span>
+                ) : (
+                  <div className="w-6 h-6 rounded-full border-2 border-white/20 border-t-[#ed8395] animate-spin" />
+                )}
+              </div>
+            )}
+          </div>
+
+          {short.status === "failed" && short.errorMessage && <p className="text-xs text-[#B0503E] mb-3">{short.errorMessage}</p>}
+          {downloadError && <p className="text-xs text-[#B0503E] mb-3">{downloadError}</p>}
+
+          <div className="flex items-center gap-2 mb-5">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-full border border-[#ECE5E6] text-sm font-medium text-[#1d1b1e] hover:bg-[#FAF8F7] transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+            <button
+              disabled
+              title="Caption editing is coming soon"
+              className="w-9 h-9 rounded-full bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-[18px]">edit_note</span>
+            </button>
+            <button
+              disabled
+              title="Cropping is coming soon"
+              className="w-9 h-9 rounded-full bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-[18px]">crop</span>
+            </button>
+            <button
+              onClick={handleDownload}
+              disabled={!isReady || downloading}
+              title="Download HD"
+              className="w-9 h-9 rounded-full bg-[#1d1b1e] hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px]">download</span>
+            </button>
+          </div>
+
+          <h3 className="text-sm font-semibold text-[#1d1b1e] mb-2">Scene analysis</h3>
+          <span className="inline-block bg-[#FAF8F7] border border-[#ECE5E6] rounded-md px-2 py-0.5 text-xs font-mono text-[#544244] mb-2">
+            [{formatClockTime(short.sourceStartSeconds)} - {formatClockTime(short.sourceEndSeconds)}]
+          </span>
+          <p className="text-sm text-[#544244] leading-relaxed mb-3">{short.caption}</p>
+          {short.viralScore != null && (
+            <p className="text-xs text-[#9a4153] font-medium mb-4">Viral score: {short.viralScore}/100</p>
+          )}
+
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="text-xs text-[#7B7579] hover:text-[#EF4444] underline underline-offset-2 cursor-pointer disabled:opacity-50"
+          >
+            {deleting ? "Deleting…" : "Delete this short"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+export default function ShortsGallery({
+  projectId,
+  projectName,
+  shorts,
+  onShortsChange,
+}: {
+  projectId: string;
+  projectName: string | null;
+  shorts: Short[];
+  onShortsChange: (shorts: Short[]) => void;
+}) {
+  const [openShortId, setOpenShortId] = useState<string | null>(null);
+  const readyCount = shorts.filter((s) => s.status === "ready").length;
+  const bestScore = shorts.reduce((max, s) => (s.viralScore != null && s.viralScore > max ? s.viralScore : max), 0);
+  const openShort = shorts.find((s) => s.id === openShortId) ?? null;
+
+  function handleDeleted(id: string) {
+    onShortsChange(shorts.filter((s) => s.id !== id));
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <section className="bg-white rounded-2xl p-4 border border-[#ECE5E6] shadow-sm flex flex-col gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-[#fdd5e1] text-[#9a4153] flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-[18px]">movie</span>
+          </div>
+          <div className="min-w-0">
+            <span className="text-[11px] text-[#7B7579] block">Active Project</span>
+            <span className="text-[16px] font-semibold text-[#1d1b1e] leading-tight truncate block">{projectName ?? "Untitled project"}</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[#ECE5E6]/60">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#fdd5e1] text-[#795a64] text-[11px] font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#9a4153]" />
+            {shorts.length} clip{shorts.length === 1 ? "" : "s"} · {readyCount} ready
+          </span>
+          {bestScore > 0 && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FAF8F7] text-[#9a4153] text-[11px] font-medium">
+              <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                trending_up
+              </span>
+              Best viral score: {bestScore}/100
+            </span>
+          )}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+        {shorts.map((short) => (
+          <ShortCard
+            key={short.id}
+            projectId={projectId}
+            short={short}
+            onOpen={() => setOpenShortId(short.id)}
+            onDeleted={handleDeleted}
+          />
+        ))}
+      </div>
+
+      {openShort && (
+        <ShortDetailModal projectId={projectId} short={openShort} onClose={() => setOpenShortId(null)} onDeleted={handleDeleted} />
+      )}
+    </div>
+  );
+}

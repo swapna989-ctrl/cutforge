@@ -207,3 +207,71 @@ export async function deleteProjectClip(id: string): Promise<void> {
   const { error } = await supabase.from("project_clips").delete().eq("id", id);
   if (error) throw error;
 }
+
+export type Short = {
+  id: string;
+  projectId: string;
+  position: number;
+  sourceStartSeconds: number;
+  sourceEndSeconds: number;
+  hook: string;
+  caption: string;
+  /** LLM-estimated, not measured — see worker/src/clipPlanner.ts. Null for shorts planned
+   *  before viral scoring existed. */
+  viralScore: number | null;
+  status: "pending" | "processing" | "ready" | "failed";
+  outputKey: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+type ShortRow = {
+  id: string;
+  project_id: string;
+  position: number;
+  source_start_seconds: number;
+  source_end_seconds: number;
+  hook: string;
+  caption: string;
+  viral_score: number | null;
+  status: string;
+  output_key: string | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+function mapShortRow(row: ShortRow): Short {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    position: row.position,
+    sourceStartSeconds: row.source_start_seconds,
+    sourceEndSeconds: row.source_end_seconds,
+    hook: row.hook,
+    caption: row.caption,
+    viralScore: row.viral_score,
+    status: row.status as Short["status"],
+    outputKey: row.output_key,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+  };
+}
+
+/** Lists a project's AI-generated shorts in position order. RLS scopes this via the parent
+ *  project's user_id, same join pattern as project_clips. */
+export async function listShorts(projectId: string): Promise<Short[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("shorts")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("position", { ascending: true });
+  if (error) throw error;
+  return (data as ShortRow[]).map(mapShortRow);
+}
+
+export async function deleteShort(id: string): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.from("shorts").delete().eq("id", id);
+  if (error) throw error;
+}
