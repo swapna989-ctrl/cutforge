@@ -31,10 +31,12 @@ type BillingContextValue = {
   /** True when there's any credit or plan left to export with (watermarked or not). */
   canExport: boolean;
   /**
-   * Call once per completed export. This is enforced server-side (a Postgres function, not a
-   * plain table update) — the client can't just set its own balance, and this can genuinely
-   * fail (e.g. a race with another tab draining the last credit), so callers must handle the
-   * returned error rather than assume it always succeeds.
+   * Call once per video submitted for clipping (see ClippingPage) — not per short downloaded.
+   * A submission's watermark-free status is locked in at the same moment (see projects.watermark),
+   * so charging here covers the whole batch of up to 5 AI-planned shorts that submission produces.
+   * Enforced server-side (a Postgres function, not a plain table update) — the client can't just
+   * set its own balance, and this can genuinely fail (e.g. a race with another tab draining the
+   * last credit), so callers must handle the returned error rather than assume it always succeeds.
    */
   consumeExportCredit: () => Promise<{ error: string | null }>;
   buyCreditPack: (amount: number) => Promise<{ error: string | null }>;

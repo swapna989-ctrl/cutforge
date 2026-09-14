@@ -26,6 +26,13 @@ export const WORKER_BUILD = "2026-09-14-ai-clip-planner";
 
 const MB = 1024 * 1024;
 
+// Mirrors the client-side check in src/lib/upload.ts — kept here too since that check reads
+// duration via the browser's <video> element, which can't always read AVI/MKV metadata and lets
+// those through unchecked. This is the real backstop: every job's duration is known for certain
+// by this point, regardless of container or how the client-side check went.
+const MIN_VIDEO_SECONDS = 5 * 60;
+const MAX_VIDEO_SECONDS = 3 * 60 * 60;
+
 /**
  * What the *container* reports about itself. A container that reports the host's CPU count
  * rather than its own quota makes ffmpeg auto-size thread pools (and their per-thread frame
@@ -108,6 +115,12 @@ export async function processJob(job: ProjectRow): Promise<void> {
 
     await updateJob(job.id, { status_message: "Detecting scene boundaries…", progress: 20 });
     const duration = await getDuration(normalizedPath);
+    if (duration < MIN_VIDEO_SECONDS) {
+      throw new Error(`Video is too short (${Math.round(duration)}s) — must be at least 5 minutes long.`);
+    }
+    if (duration > MAX_VIDEO_SECONDS) {
+      throw new Error(`Video is too long (${Math.round(duration)}s) — must be under 3 hours.`);
+    }
     const silences = await detectSilences(normalizedPath);
 
     await updateJob(job.id, { status_message: "Removing dead air & filler pauses…", progress: 40 });
