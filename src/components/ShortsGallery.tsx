@@ -120,15 +120,15 @@ function ShortCard({
         deleting ? "opacity-40 pointer-events-none" : ""
       }`}
     >
-      <div className="relative w-full aspect-[9/16] bg-[#332f32] overflow-hidden">
+      <div className="relative w-full aspect-[9/16] bg-[#FAF8F7] overflow-hidden">
         {videoSrc ? (
           <video src={videoSrc} muted playsInline preload="metadata" className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             {short.status === "failed" ? (
-              <span className="material-symbols-outlined text-white/30 text-2xl">error_outline</span>
+              <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">error_outline</span>
             ) : (
-              <div className="w-5 h-5 rounded-full border-2 border-white/20 border-t-[#ed8395] animate-spin" />
+              <div className="w-5 h-5 rounded-full border-2 border-[#ECE5E6] border-t-[#ed8395] animate-spin" />
             )}
           </div>
         )}
@@ -314,10 +314,7 @@ function ShortDetailModal({
           <span className="inline-block bg-[#FAF8F7] border border-[#ECE5E6] rounded-md px-2 py-0.5 text-xs font-mono text-[#544244] mb-2">
             [{formatClockTime(short.sourceStartSeconds)} - {formatClockTime(short.sourceEndSeconds)}]
           </span>
-          <p className="text-sm text-[#544244] leading-relaxed mb-3">{short.caption}</p>
-          {short.viralScore != null && (
-            <p className="text-xs text-[#9a4153] font-medium mb-4">Viral score: {short.viralScore}/100</p>
-          )}
+          <p className="text-sm text-[#544244] leading-relaxed mb-4">{short.caption}</p>
 
           <button
             onClick={handleDelete}
@@ -334,18 +331,15 @@ function ShortDetailModal({
 
 export default function ShortsGallery({
   projectId,
-  projectName,
   shorts,
   onShortsChange,
 }: {
   projectId: string;
-  projectName: string | null;
   shorts: Short[];
   onShortsChange: (shorts: Short[]) => void;
 }) {
   const [openShortId, setOpenShortId] = useState<string | null>(null);
   const readyCount = shorts.filter((s) => s.status === "ready").length;
-  const bestScore = shorts.reduce((max, s) => (s.viralScore != null && s.viralScore > max ? s.viralScore : max), 0);
   const openShort = shorts.find((s) => s.id === openShortId) ?? null;
 
   function handleDeleted(id: string) {
@@ -354,30 +348,11 @@ export default function ShortsGallery({
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="bg-white rounded-2xl p-4 border border-[#ECE5E6] shadow-sm flex flex-col gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-[#fdd5e1] text-[#9a4153] flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-[18px]">movie</span>
-          </div>
-          <div className="min-w-0">
-            <span className="text-[11px] text-[#7B7579] block">Active Project</span>
-            <span className="text-[16px] font-semibold text-[#1d1b1e] leading-tight truncate block">{projectName ?? "Untitled project"}</span>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[#ECE5E6]/60">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#fdd5e1] text-[#795a64] text-[11px] font-medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#9a4153]" />
-            {shorts.length} clip{shorts.length === 1 ? "" : "s"} · {readyCount} ready
-          </span>
-          {bestScore > 0 && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FAF8F7] text-[#9a4153] text-[11px] font-medium">
-              <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                trending_up
-              </span>
-              Best viral score: {bestScore}/100
-            </span>
-          )}
-        </div>
+      <section className="bg-white rounded-2xl p-4 border border-[#ECE5E6] shadow-sm">
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#fdd5e1] text-[#795a64] text-[11px] font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#9a4153]" />
+          {shorts.length} clip{shorts.length === 1 ? "" : "s"} · {readyCount} ready
+        </span>
       </section>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
