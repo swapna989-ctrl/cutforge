@@ -8,10 +8,9 @@ import { useBilling } from "@/lib/billing";
 import type { PipelineStatus } from "@/lib/pipeline";
 
 /**
- * A deliberately lighter top bar than AppShell's — a focused editing surface should recede its
- * own account-level chrome (dashboard/pricing/settings nav, credits pill) rather than compete
- * with the footage for attention. AppShell itself is untouched; every other page keeps its
- * current nav exactly as-is.
+ * A deliberately lighter top bar than DashboardShell's — a focused editing surface should
+ * recede its own account-level chrome (nav, credits pill) rather than compete with the footage
+ * for attention.
  */
 export default function WorkspaceShell({
   projectName,
@@ -45,11 +44,11 @@ export default function WorkspaceShell({
     <div className="min-h-screen bg-[#FAF7F2]">
       <header className="sticky top-0 z-50 w-full px-4 sm:px-6 py-3.5 bg-[#FAF7F2]/90 backdrop-blur-xl border-b border-[#E8E2D6] flex items-center justify-between gap-3">
         <Link
-          href="/dashboard"
+          href="/clipping"
           className="flex items-center space-x-1.5 text-xs font-mono text-[#8A8375] hover:text-[#A8724A] transition-colors shrink-0"
         >
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          <span className="hidden sm:inline">Dashboard</span>
+          <span className="hidden sm:inline">Your projects</span>
         </Link>
 
         <div className="flex-1 min-w-0 text-center">
@@ -95,7 +94,13 @@ export default function WorkspaceShell({
                     href="/dashboard"
                     className="block px-3.5 py-2 text-xs text-[#5C5648] hover:bg-[#F5F1EA] hover:text-[#2B2926] transition-colors"
                   >
-                    Dashboard
+                    Home
+                  </Link>
+                  <Link
+                    href="/clipping"
+                    className="block px-3.5 py-2 text-xs text-[#5C5648] hover:bg-[#F5F1EA] hover:text-[#2B2926] transition-colors"
+                  >
+                    Your projects
                   </Link>
                   <Link
                     href="/pricing"
