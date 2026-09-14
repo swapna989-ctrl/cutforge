@@ -187,7 +187,7 @@ export default function SettingsPage() {
                 <li className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
                   <span>
-                    {billing.planCredits} clip{billing.planCredits === 1 ? "" : "s"} remaining this month
+                    {billing.planCredits} credit{billing.planCredits === 1 ? "" : "s"} remaining this month
                     {billing.billingCycle === "yearly" ? " (billed yearly)" : ""}
                   </span>
                 </li>

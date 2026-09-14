@@ -45,6 +45,22 @@ function mapRow(row: BillingRow): BillingData {
   };
 }
 
+async function fetchBillingRow(userId: string): Promise<BillingData> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("billing")
+    .select("free_credits, paid_credits, plan_tier, billing_cycle, plan_credits, plan_renews_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data) {
+    // Shouldn't normally happen — a billing row is created by a database trigger the moment a
+    // user signs up — but degrade to a visible zero-state rather than hang.
+    if (error) console.error("Failed to load billing:", error.message);
+    return DEFAULT_DATA;
+  }
+  return mapRow(data as BillingRow);
+}
+
 type BillingContextValue = {
   freeCredits: number;
   paidCredits: number;
@@ -58,19 +74,24 @@ type BillingContextValue = {
   isWatermarkFree: boolean;
   /** True when there's any credit or plan allowance left to export with (watermarked or not). */
   canExport: boolean;
+  /** Total credits actually spendable right now (active plan's remaining allowance + paid + free). */
+  availableCredits: number;
   /**
-   * Call once per video submitted for clipping (see ClippingPage) — not per short downloaded.
-   * A submission's watermark-free status is locked in at the same moment (see projects.watermark),
-   * so charging here covers the whole batch of up to 5 AI-planned shorts that submission produces.
+   * Spends an exact number of credits for the legacy single-output "Download Master" flow (see
+   * WorkspaceView) — the only remaining client-initiated charge. Every new (post-AI-Clip-Planner)
+   * submission is charged server-side by the worker once it knows the real video duration (see
+   * charge_project_credits in supabase/migrations/0009_duration_scaled_credits.sql), not by this.
    * Enforced server-side (a Postgres function, not a plain table update) — the client can't just
    * set its own balance, and this can genuinely fail (e.g. a race with another tab draining the
    * last credit), so callers must handle the returned error rather than assume it always succeeds.
    * Spends this month's plan allowance first, then paid credits, then free credits.
    */
-  consumeExportCredit: () => Promise<{ error: string | null }>;
+  consumeExportCredit: (creditsNeeded: number) => Promise<{ error: string | null }>;
   buyCreditPack: (amount: number) => Promise<{ error: string | null }>;
   subscribe: (tier: Exclude<PlanTier, "none">, cycle: BillingCycle) => Promise<{ error: string | null }>;
   cancelPlan: () => Promise<{ error: string | null }>;
+  /** Re-fetches the real balance from the DB — see the note on refresh() below for why this exists. */
+  refresh: () => Promise<void>;
 };
 
 const BillingContext = createContext<BillingContextValue | null>(null);
@@ -88,23 +109,9 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false;
-    const supabase = createClient();
-    supabase
-      .from("billing")
-      .select("free_credits, paid_credits, plan_tier, billing_cycle, plan_credits, plan_renews_at")
-      .eq("user_id", user.id)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (error || !data) {
-          // Shouldn't normally happen — a billing row is created by a database trigger the
-          // moment a user signs up — but degrade to a visible zero-state rather than hang.
-          if (error) console.error("Failed to load billing:", error.message);
-          setState({ data: DEFAULT_DATA, ready: true });
-          return;
-        }
-        setState({ data: mapRow(data as BillingRow), ready: true });
-      });
+    fetchBillingRow(user.id).then((data) => {
+      if (!cancelled) setState({ data, ready: true });
+    });
 
     return () => {
       cancelled = true;
@@ -115,7 +122,20 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   const { data } = state;
   const hasActivePlan = data.planTier !== "none";
   const isWatermarkFree = hasActivePlan || data.paidCredits > 0;
+  const availableCredits = (hasActivePlan ? data.planCredits : 0) + data.paidCredits + data.freeCredits;
   const canExport = (hasActivePlan && data.planCredits > 0) || data.paidCredits > 0 || data.freeCredits > 0;
+
+  // Charging for a new submission now happens server-side, in the worker, once it knows the
+  // video's real duration (see charge_project_credits in
+  // supabase/migrations/0009_duration_scaled_credits.sql) — the client never deducts anything at
+  // submission time, so its local balance can't be kept in sync by watching RPC responses. This
+  // is the fallback: re-fetch the real row from the DB on demand (e.g. while a submission's
+  // pipeline is in progress, see ClippingPage's polling effect).
+  async function refresh() {
+    if (!user) return;
+    const data = await fetchBillingRow(user.id);
+    setState({ data, ready: true });
+  }
 
   async function callBillingRpc(fn: string, args?: Record<string, unknown>): Promise<{ error: string | null }> {
     const supabase = createClient();
@@ -125,8 +145,8 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     return { error: null };
   }
 
-  function consumeExportCredit() {
-    return callBillingRpc("consume_export_credit");
+  function consumeExportCredit(creditsNeeded: number) {
+    return callBillingRpc("consume_export_credit", { credits_needed: creditsNeeded });
   }
 
   function buyCreditPack(amount: number) {
@@ -154,10 +174,12 @@ export function BillingProvider({ children }: { children: ReactNode }) {
         hasActivePlan,
         isWatermarkFree,
         canExport,
+        availableCredits,
         consumeExportCredit,
         buyCreditPack,
         subscribe,
         cancelPlan,
+        refresh,
       }}
     >
       {children}

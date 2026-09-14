@@ -5,7 +5,7 @@ import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
 import { useRequireAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
-import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, type BillingCycle, type PlanTier } from "@/lib/pricing";
+import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, CREDIT_SECONDS, creditsToMinutes, type BillingCycle, type PlanTier } from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
@@ -25,9 +25,16 @@ const TIER_BLURB: Record<Exclude<PlanTier, "none">, string> = {
 // team seats, or social scheduling, since none of those exist in CutForge yet.
 const TIER_FEATURES: Record<Exclude<PlanTier, "none">, string[]> = {
   starter: ["AI clip planning + viral score", "Kinetic auto-captions", "Vertical & horizontal crop", "No watermark"],
-  creator: ["Everything in Starter", "3x the monthly clips", "Rollover up to 2x unused credits"],
-  agency: ["Everything in Creator", "4x Creator's monthly clips", "Rollover up to 2x unused credits"],
+  creator: ["Everything in Starter", "3x Starter's monthly minutes", "Rollover up to 2x unused credits"],
+  agency: ["Everything in Creator", "~2.7x Creator's monthly minutes", "Rollover up to 2x unused credits"],
 };
+
+/** 150 -> "2.5 hrs", 45 -> "45 min" — whichever reads more naturally at that size. */
+function formatMinutes(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hrs`;
+}
 
 export default function PricingPage() {
   const { ready, user } = useRequireAuth();
@@ -91,7 +98,7 @@ export default function PricingPage() {
         <span className="text-[#7B7579]">
           Plan:{" "}
           <span className="text-[#9a4153] font-semibold">
-            {billing.hasActivePlan ? `${TIER_LABEL[billing.planTier]} · ${billing.planCredits} clips left this month` : "None"}
+            {billing.hasActivePlan ? `${TIER_LABEL[billing.planTier]} · ${billing.planCredits} credits left this month` : "None"}
           </span>
         </span>
         {billing.hasActivePlan && (
@@ -106,8 +113,8 @@ export default function PricingPage() {
       <section className="mb-16">
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Subscriptions</h2>
         <p className="text-xs text-[#7B7579] mb-5 text-center max-w-md mx-auto">
-          A monthly allowance of videos to clip, watermark-free — 1 video submitted uses 1 clip from your allowance and unlocks up to 5
-          AI-planned shorts from it.
+          A monthly allowance of source-video minutes to clip, watermark-free — submitting a video uses minutes in proportion to its
+          real length and unlocks up to 5 AI-planned shorts from it.
         </p>
 
         <div className="flex justify-center mb-8">
@@ -162,8 +169,12 @@ export default function PricingPage() {
                   <p className="text-[11px] text-[#7B7579] mb-3">₹{cfg.priceYearlyTotal.toLocaleString("en-IN")} billed yearly</p>
                 )}
                 {cycle === "monthly" && <p className="text-[11px] text-[#7B7579] mb-3">billed monthly</p>}
-                <p className="text-sm font-semibold text-[#1d1b1e] mb-4">
-                  {cfg.monthlyCredits} videos<span className="text-[#7B7579] font-normal text-xs"> / month</span>
+                <p className="text-sm font-semibold text-[#1d1b1e] mb-1">
+                  {formatMinutes(creditsToMinutes(cfg.monthlyCredits))}
+                  <span className="text-[#7B7579] font-normal text-xs"> of video / month</span>
+                </p>
+                <p className="text-[11px] text-[#7B7579] mb-4">
+                  {cfg.monthlyCredits} credits · 1 credit ≈ {CREDIT_SECONDS / 60} min
                 </p>
                 <ul className="space-y-1.5 text-xs text-[#544244] mb-5 text-left flex-1">
                   {TIER_FEATURES[tier].map((f) => (
@@ -200,7 +211,8 @@ export default function PricingPage() {
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Credit packs</h2>
         <p className="text-xs text-[#7B7579] mb-6 text-center max-w-md mx-auto">
           One-time purchase, no auto-renewal — a way to keep clipping past your plan&apos;s monthly allowance, or without a subscription at
-          all. Each video submitted uses 1 credit and unlocks up to 5 AI-planned shorts from it, watermark-free.
+          all. Submitting a video uses credits in proportion to its real length (1 credit ≈ {CREDIT_SECONDS / 60} min) and unlocks up to
+          5 AI-planned shorts from it, watermark-free.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-4xl mx-auto">
           {CREDIT_PACKS.map((pack) => {
@@ -216,7 +228,8 @@ export default function PricingPage() {
                   </span>
                 )}
                 <span className={`${playfair.className} text-3xl font-semibold text-[#1d1b1e] mt-2`}>{pack.credits}</span>
-                <span className="text-xs text-[#7B7579] uppercase tracking-wide mb-4">credits</span>
+                <span className="text-xs text-[#7B7579] uppercase tracking-wide">credits</span>
+                <span className="text-[11px] text-[#B3ACA6] mb-4">≈ {formatMinutes(creditsToMinutes(pack.credits))} of video</span>
                 <span className="text-2xl font-semibold text-[#9a4153] mb-5">₹{pack.price}</span>
                 <button
                   onClick={() => handleBuyPack(key, pack.credits)}

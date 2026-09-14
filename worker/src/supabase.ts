@@ -54,6 +54,26 @@ export async function updateJob(id: string, patch: Partial<ProjectRow>): Promise
   if (error) throw error;
 }
 
+/**
+ * The real charge for this project: called once processJob knows the source's actual duration
+ * (see charge_project_credits in supabase/migrations/0009_duration_scaled_credits.sql), before
+ * any of the metered Whisper/LLM calls that actually cost money run. Throws — with a message
+ * starting "INSUFFICIENT_CREDITS: " — if the owner can't afford it, which the caller lets
+ * propagate up to processJob's normal failure handling rather than ever starting those calls.
+ * Idempotent server-side, so a resumed/retried job is never charged twice.
+ */
+export async function chargeProjectCredits(
+  projectId: string,
+  durationSeconds: number
+): Promise<{ chargedCredits: number; watermarkFree: boolean }> {
+  const { data, error } = await supabase
+    .rpc("charge_project_credits", { p_project_id: projectId, p_duration_seconds: Math.round(durationSeconds) })
+    .single();
+  if (error) throw new Error(error.message);
+  const row = data as { charged_credits: number; watermark_free: boolean };
+  return { chargedCredits: row.charged_credits, watermarkFree: row.watermark_free };
+}
+
 export type ProjectClipRow = {
   id: string;
   project_id: string;

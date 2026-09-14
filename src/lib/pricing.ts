@@ -24,3 +24,18 @@ export const TIER_CONFIG: Record<Exclude<PlanTier, "none">, {
 };
 
 export const TIER_ORDER: Exclude<PlanTier, "none">[] = ["starter", "creator", "agency"];
+
+// 1 credit = up to this many seconds of source video — mirrors charge_project_credits() in
+// supabase/migrations/0009_duration_scaled_credits.sql (the DB is what actually charges; this is
+// only for showing a real estimate before submitting, since the worker measures the true duration
+// and charges from that, not from anything the client computes).
+export const CREDIT_SECONDS = 600;
+
+export function creditsForDuration(seconds: number): number {
+  return Math.max(1, Math.ceil(seconds / CREDIT_SECONDS));
+}
+
+/** Minutes of video a given number of credits actually buys — for display only. */
+export function creditsToMinutes(credits: number): number {
+  return (credits * CREDIT_SECONDS) / 60;
+}

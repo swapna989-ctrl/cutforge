@@ -19,7 +19,7 @@ import {
 } from "./ffmpeg.js";
 import { transcribeToSrt, transcribeSegments } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
-import { updateJob, getProjectClips, createShorts, updateShort, type ProjectRow } from "./supabase.js";
+import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, type ProjectRow } from "./supabase.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
 export const WORKER_BUILD = "2026-09-14-ai-clip-planner";
@@ -121,6 +121,16 @@ export async function processJob(job: ProjectRow): Promise<void> {
     if (duration > MAX_VIDEO_SECONDS) {
       throw new Error(`Video is too long (${Math.round(duration)}s) — must be under 3 hours.`);
     }
+
+    // The real charge, for the real duration — before any of the metered Whisper/LLM calls
+    // below run, so a video the owner can't actually afford fails here (cheap: just download +
+    // normalize) instead of after real OpenAI usage has already been spent on it. Also decides
+    // watermark for the whole project, since that's exactly this same charge's outcome (a plan or
+    // paid credit buys watermark-free; a free credit doesn't) — see charge_project_credits.
+    await updateJob(job.id, { status_message: "Charging credits…", progress: 22 });
+    const { watermarkFree } = await chargeProjectCredits(job.id, duration);
+    job.watermark = !watermarkFree;
+
     const silences = await detectSilences(normalizedPath);
 
     await updateJob(job.id, { status_message: "Removing dead air & filler pauses…", progress: 40 });

@@ -8,6 +8,7 @@ import ProjectCard from "@/components/ProjectCard";
 import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
+import { creditsForDuration } from "@/lib/pricing";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, updateProject, deleteProject, type Project } from "@/lib/projects";
 
@@ -72,12 +73,18 @@ export default function ClippingPage() {
       try {
         const fresh = await listProjects();
         setProjects(fresh);
+        // The worker charges credits itself now, once it knows a submission's real duration (see
+        // charge_project_credits) — nothing on this page triggers that RPC directly anymore, so
+        // this is what keeps the visible balance from going stale while that charge happens
+        // somewhere in the background.
+        billing.refresh();
       } catch {
         // Transient — the next tick tries again rather than surfacing a poll-loop error.
       }
     }, 3000);
 
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- billing is a fresh object every render; only loadState/hasInProgress should restart this interval
   }, [loadState, hasInProgress]);
 
   /** Uploads every picked file for real (same R2 + project/project_clips flow WorkspaceView
@@ -123,14 +130,20 @@ export default function ClippingPage() {
       return;
     }
 
-    // Charged once per video submitted, not per short downloaded — this is the point where
-    // watermark-free-ness is already being decided (below), and it's what actually buys the
-    // real work: AI planning + rendering up to 5 shorts from this one source.
-    const { error: creditError } = await billing.consumeExportCredit();
-    if (creditError) {
-      setFileUploadError(creditError);
-      setUploadingFiles(false);
-      return;
+    // The real charge happens server-side once the worker measures the source's actual duration
+    // (see charge_project_credits) — but every duration is already known here, so a submission
+    // that obviously can't be afforded is rejected before wasting any upload bandwidth on it,
+    // rather than uploading first and only finding out it fails once queued.
+    if (durations.every((d) => d != null)) {
+      const totalSeconds = durations.reduce((sum, d) => sum + (d ?? 0), 0);
+      const creditsNeeded = creditsForDuration(totalSeconds);
+      if (creditsNeeded > billing.availableCredits) {
+        setFileUploadError(
+          `This video needs ${creditsNeeded} credits (you have ${billing.availableCredits}) — buy more or upgrade your plan.`
+        );
+        setUploadingFiles(false);
+        return;
+      }
     }
 
     let createdProjectId: string | null = null;
@@ -148,7 +161,10 @@ export default function ClippingPage() {
         pipelineStatus: "ingesting",
         progress: 0,
         sourceKey: firstKey,
-        watermark: !billing.isWatermarkFree,
+        // Placeholder — the worker decides the real value once it charges for this project's
+        // actual duration (see charge_project_credits), which is also the moment it's certain
+        // whether that charge came from a paid source or a free one.
+        watermark: true,
       });
       createdProjectId = created.id;
 
@@ -193,14 +209,10 @@ export default function ClippingPage() {
 
     setSubmittingUrl(true);
 
-    // Same rule as the file-upload path: 1 credit per video submitted, not per short downloaded.
-    const { error: creditError } = await billing.consumeExportCredit();
-    if (creditError) {
-      setUrlError(creditError);
-      setSubmittingUrl(false);
-      return;
-    }
-
+    // A link's real duration isn't known until the worker downloads it — so, unlike the
+    // file-upload path, there's no accurate way to pre-check affordability here. The worker
+    // charges for the real duration once it knows it (see charge_project_credits) and fails the
+    // job with a clear message if that turns out to be more than the balance covers.
     try {
       const created = await createProject({
         name: trimmed,
@@ -208,7 +220,8 @@ export default function ClippingPage() {
         pipelineStatus: "queued",
         progress: 0,
         sourceUrl: trimmed,
-        watermark: !billing.isWatermarkFree,
+        // Placeholder — see the matching note in handleFilesPicked.
+        watermark: true,
       });
       setProjects((prev) => [created, ...prev]);
       setUrlInput("");
@@ -345,7 +358,7 @@ export default function ClippingPage() {
         {billing.ready && (
           <span className="text-sm text-[#7B7579]">
             {billing.hasActivePlan
-              ? `${billing.planCredits} clip${billing.planCredits === 1 ? "" : "s"} left this month`
+              ? `${billing.planCredits} credit${billing.planCredits === 1 ? "" : "s"} left this month`
               : billing.paidCredits > 0
                 ? `${billing.freeCredits + billing.paidCredits} credits left`
                 : `${billing.freeCredits}/${FREE_CREDITS_GRANT} credits left`}

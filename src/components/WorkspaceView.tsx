@@ -21,7 +21,8 @@ import {
 } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
-import { readVideoDuration, uploadClipToR2 } from "@/lib/upload";
+import { creditsForDuration } from "@/lib/pricing";
+import { readVideoDuration, uploadClipToR2, MAX_VIDEO_SECONDS } from "@/lib/upload";
 
 export default function WorkspaceView({ initialProject }: { initialProject?: Project }) {
   const { prefs, ready: prefsReady } = usePrefs();
@@ -229,7 +230,10 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         pipelineStatus: "ingesting",
         progress: 0,
         sourceKey: firstKey,
-        watermark: !billing.isWatermarkFree,
+        // Placeholder for a real (post-AI-Clip-Planner) project — the worker decides the real
+        // value once it charges for this project's actual duration (see charge_project_credits).
+        // Only ever overridden by handleDownload below for a legacy zero-shorts project.
+        watermark: true,
       });
       createdProjectId = created.id;
       projectIdRef.current = created.id;
@@ -456,16 +460,22 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     // redirect this already-open tab once we have the real download URL.
     const downloadWindow = window.open("", "_blank");
 
+    // This legacy flow (see the module doc comment above `shorts`) is the one remaining charge
+    // that still happens client-side rather than in the worker — duration is whatever this
+    // project's own upload reported, or (if that was never readable) the maximum a video is
+    // allowed to be, so an unknown-length legacy video is never undercharged.
+    const creditsNeeded = creditsForDuration(duration ?? MAX_VIDEO_SECONDS);
+
     // Snapshot what this export will look like *before* consumeExportCredit mutates billing
     // state, so the delivered master's watermark/credit display can't retroactively change.
     // Note this is just the preview label — the file itself was already rendered watermarked
     // or not, decided once at upload time (see projects.watermark).
     const watermarkFree = billing.isWatermarkFree;
     const label = watermarkFree
-      ? billing.hasActivePlan && billing.planCredits > 0
-        ? `No watermark · ${billing.planCredits - 1} clip${billing.planCredits - 1 === 1 ? "" : "s"} left this month`
-        : `No watermark · ${billing.paidCredits - 1} paid credit${billing.paidCredits - 1 === 1 ? "" : "s"} left`
-      : `Includes CutForge watermark (${billing.freeCredits - 1} free export${billing.freeCredits - 1 === 1 ? "" : "s"} left)`;
+      ? billing.hasActivePlan && billing.planCredits >= creditsNeeded
+        ? `No watermark · ${billing.planCredits - creditsNeeded} credit${billing.planCredits - creditsNeeded === 1 ? "" : "s"} left this month`
+        : `No watermark · ${billing.paidCredits - creditsNeeded} paid credit${billing.paidCredits - creditsNeeded === 1 ? "" : "s"} left`
+      : `Includes CutForge watermark (${billing.freeCredits - creditsNeeded} free export${billing.freeCredits - creditsNeeded === 1 ? "" : "s"} left)`;
 
     setDownloadState("preparing");
     (async () => {
@@ -479,7 +489,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
 
         // Server-enforced — this can genuinely fail (e.g. another tab spent the last credit in
         // the gap between the canExport check above and now), not just a local state update.
-        const { error } = await billing.consumeExportCredit();
+        const { error } = await billing.consumeExportCredit(creditsNeeded);
         if (error) {
           downloadWindow?.close();
           setDownloadState("idle");
