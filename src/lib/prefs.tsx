@@ -6,14 +6,10 @@ import { useAuth } from "@/lib/auth";
 
 export type Prefs = {
   defaultRatio: Ratio;
-  autoCaptions: boolean;
-  beatSync: boolean;
 };
 
 const DEFAULT_PREFS: Prefs = {
   defaultRatio: "9:16",
-  autoCaptions: true,
-  beatSync: true,
 };
 
 const STORAGE_PREFIX = "cutforge_prefs:";
@@ -24,8 +20,6 @@ function sanitize(raw: unknown): Prefs {
   const r = raw as Partial<Record<keyof Prefs, unknown>>;
   return {
     defaultRatio: typeof r.defaultRatio === "string" && VALID_RATIOS.includes(r.defaultRatio as Ratio) ? (r.defaultRatio as Ratio) : DEFAULT_PREFS.defaultRatio,
-    autoCaptions: typeof r.autoCaptions === "boolean" ? r.autoCaptions : DEFAULT_PREFS.autoCaptions,
-    beatSync: typeof r.beatSync === "boolean" ? r.beatSync : DEFAULT_PREFS.beatSync,
   };
 }
 

@@ -1,23 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import AppShell from "@/components/AppShell";
-import Switch from "@/components/Switch";
+import { Playfair_Display } from "next/font/google";
+import DashboardShell from "@/components/DashboardShell";
 import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling, type Plan } from "@/lib/billing";
 import type { Ratio } from "@/lib/pipeline";
 
-const PLAN_LABEL: Record<Plan, string> = { none: "Free Plan", weekly: "Weekly Plan", monthly: "Monthly Plan", yearly: "Yearly Plan" };
+const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
+
+const PLAN_LABEL: Record<Plan, string> = { none: "Free plan", weekly: "Weekly plan", monthly: "Monthly plan", yearly: "Yearly plan" };
 
 function SectionCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
-    <section className="bg-[#121216]/90 border border-white/[0.08] rounded-[28px] p-6 sm:p-7 relative overflow-hidden">
-      <div className="absolute top-0 left-10 right-10 h-[1px] bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
-      <h2 className="font-display text-lg font-semibold text-white mb-1">{title}</h2>
-      <p className="text-xs text-zinc-400 font-body mb-5">{description}</p>
+    <section className="bg-white border border-[#ECE5E6] rounded-3xl p-5 sm:p-6 shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)]">
+      <h2 className="text-base font-semibold text-[#1d1b1e] mb-1">{title}</h2>
+      <p className="text-xs text-[#7B7579] mb-5">{description}</p>
       {children}
     </section>
   );
@@ -28,18 +28,17 @@ function SaveButton({ state }: { state: "idle" | "saving" | "saved" }) {
     <button
       type="submit"
       disabled={state === "saving"}
-      className="px-5 py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
+      className="px-5 py-2.5 rounded-full text-xs font-semibold bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
     >
-      {state === "saving" ? "Saving…" : state === "saved" ? "Saved ✓" : "Save changes"}
+      {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : "Save changes"}
     </button>
   );
 }
 
 export default function SettingsPage() {
-  const { ready, user, logout, updateProfile } = useRequireAuth();
+  const { ready, user, updateProfile } = useRequireAuth();
   const { prefs, updatePrefs } = usePrefs();
   const billing = useBilling();
-  const router = useRouter();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -49,9 +48,7 @@ export default function SettingsPage() {
   const [planError, setPlanError] = useState<string | null>(null);
 
   const [ratio, setRatio] = useState<Ratio>(prefs.defaultRatio);
-  const [autoCaptions, setAutoCaptions] = useState(prefs.autoCaptions);
-  const [beatSync, setBeatSync] = useState(prefs.beatSync);
-  const [prefsState, setPrefsState] = useState<"idle" | "saving" | "saved">("idle");
+  const [ratioState, setRatioState] = useState<"idle" | "saving" | "saved">("idle");
 
   useEffect(() => {
     // Seeds the form once the real Supabase user arrives asynchronously — an external system,
@@ -68,8 +65,6 @@ export default function SettingsPage() {
     // different tab) — same rationale as the effect above.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRatio(prefs.defaultRatio);
-    setAutoCaptions(prefs.autoCaptions);
-    setBeatSync(prefs.beatSync);
   }, [prefs]);
 
   if (!ready || !user) return null;
@@ -96,55 +91,49 @@ export default function SettingsPage() {
     if (error) setPlanError(error);
   }
 
-  function handlePrefsSubmit(e: React.FormEvent) {
+  function handleRatioSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setPrefsState("saving");
+    setRatioState("saving");
     window.setTimeout(() => {
-      updatePrefs({ defaultRatio: ratio, autoCaptions, beatSync });
-      setPrefsState("saved");
-      window.setTimeout(() => setPrefsState("idle"), 1800);
-    }, 500);
-  }
-
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
+      updatePrefs({ defaultRatio: ratio });
+      setRatioState("saved");
+      window.setTimeout(() => setRatioState("idle"), 1800);
+    }, 300);
   }
 
   return (
-    <AppShell>
-      <div className="mb-10">
-        <p className="text-xs font-mono tracking-widest text-amber-300/80 uppercase mb-2">Studio Access</p>
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-white">Settings</h1>
-        <p className="text-sm text-zinc-400 font-body mt-1">Manage your profile, editing defaults, and plan.</p>
+    <DashboardShell>
+      <div className="mb-8">
+        <h1 className={`${playfair.className} text-2xl sm:text-3xl font-semibold text-[#1d1b1e] tracking-tight`}>Settings</h1>
+        <p className="text-sm text-[#7B7579] mt-1">Manage your profile, export defaults, and plan.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <SectionCard title="Profile" description="Your name and email, shown across CutForge Studio.">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        <SectionCard title="Profile" description="Your name and email, shown across CutForge.">
           <form onSubmit={handleProfileSubmit} className="space-y-3">
             <div>
-              <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Name</label>
+              <label className="block text-xs font-medium text-[#7B7579] mb-1.5">Name</label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full bg-[#0b0b0e] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:border-amber-300/40 outline-none transition-colors"
+                className="w-full bg-[#FAF8F7] border border-[#ECE5E6] rounded-xl px-4 py-2.5 text-sm text-[#1d1b1e] focus:border-[#ed8395] focus:ring-2 focus:ring-[#ed8395]/20 outline-none transition-colors"
               />
             </div>
             <div>
-              <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">Email</label>
+              <label className="block text-xs font-medium text-[#7B7579] mb-1.5">Email</label>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[#0b0b0e] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:border-amber-300/40 outline-none transition-colors"
+                className="w-full bg-[#FAF8F7] border border-[#ECE5E6] rounded-xl px-4 py-2.5 text-sm text-[#1d1b1e] focus:border-[#ed8395] focus:ring-2 focus:ring-[#ed8395]/20 outline-none transition-colors"
               />
             </div>
-            {profileError && <p className="text-xs text-red-400">{profileError}</p>}
+            {profileError && <p className="text-xs text-[#B0503E]">{profileError}</p>}
             {emailChangePending && (
-              <p className="text-xs text-amber-200/90">Check your new email address for a confirmation link to finish the change.</p>
+              <p className="text-xs text-[#9a4153]">Check your new email address for a confirmation link to finish the change.</p>
             )}
 
             <div className="pt-1">
@@ -153,37 +142,21 @@ export default function SettingsPage() {
           </form>
         </SectionCard>
 
-        <SectionCard title="Account" description="Session and sign-out.">
-          <div className="flex items-center justify-between rounded-xl border border-white/[0.08] bg-[#0b0b0e] px-4 py-3">
-            <div>
-              <p className="text-sm text-white font-medium">{user.name}</p>
-              <p className="text-xs text-zinc-500 font-mono">{user.email}</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center space-x-1.5 text-[11px] font-medium px-3.5 py-1.5 rounded-full border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-all text-zinc-300 select-none cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[15px]">logout</span>
-              <span className="tracking-wider uppercase">Log out</span>
-            </button>
-          </div>
-        </SectionCard>
-
         <SectionCard
-          title="Export defaults"
-          description="Applied automatically whenever you start a new project — override per-project any time in the workspace."
+          title="Export default"
+          description="The aspect ratio new projects start with — override any time in the workspace."
         >
-          <form onSubmit={handlePrefsSubmit} className="space-y-5">
+          <form onSubmit={handleRatioSubmit} className="space-y-5">
             <div>
-              <label className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-2">Default aspect ratio</label>
-              <div className="inline-flex items-center p-1 rounded-full bg-[#141418] border border-white/10">
+              <label className="block text-xs font-medium text-[#7B7579] mb-2">Default aspect ratio</label>
+              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
                 {(["9:16", "16:9"] as Ratio[]).map((r) => (
                   <button
                     key={r}
                     type="button"
                     onClick={() => setRatio(r)}
-                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer ${
-                      ratio === r ? "bg-[#fbf6ee] text-[#08080a] font-semibold" : "text-zinc-400 hover:text-white"
+                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                      ratio === r ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
                     }`}
                   >
                     {r}
@@ -192,61 +165,56 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="space-y-1 border-t border-white/[0.06] pt-4">
-              <Switch checked={autoCaptions} onChange={setAutoCaptions} label="Auto-generate captions" />
-              <Switch checked={beatSync} onChange={setBeatSync} label="Sync cuts to beat" />
-            </div>
-
             <div className="pt-1">
-              <SaveButton state={prefsState} />
+              <SaveButton state={ratioState} />
             </div>
           </form>
         </SectionCard>
 
-        <SectionCard title="Plan" description="Your current CutForge Studio plan and credit balance.">
-          <div className="rounded-xl border border-amber-300/20 bg-amber-400/[0.04] px-4 py-4 mb-4">
+        <SectionCard title="Plan & billing" description="Your current CutForge plan and credit balance.">
+          <div className="rounded-xl border border-[#ECE5E6] bg-[#FAF8F7] px-4 py-4 mb-4">
             <div className="flex items-center justify-between mb-3">
-              <span className="font-display text-base font-semibold text-white">{billing.ready ? PLAN_LABEL[billing.plan] : "Loading…"}</span>
+              <span className="text-sm font-semibold text-[#1d1b1e]">{billing.ready ? PLAN_LABEL[billing.plan] : "Loading…"}</span>
               {billing.hasActivePlan && (
-                <span className="px-2 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20 text-amber-200 font-mono text-[9px] tracking-widest font-semibold uppercase">
+                <span className="px-2 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[10px] font-semibold uppercase tracking-wide">
                   Active
                 </span>
               )}
             </div>
-            <ul className="space-y-1.5 text-xs text-zinc-400 font-body">
-              <li className="flex items-center space-x-2">
-                <span className="material-symbols-outlined text-[14px] text-emerald-400">check</span>
+            <ul className="space-y-1.5 text-xs text-[#544244]">
+              <li className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
                 <span>{billing.freeCredits} free credit{billing.freeCredits === 1 ? "" : "s"} remaining</span>
               </li>
-              <li className="flex items-center space-x-2">
-                <span className="material-symbols-outlined text-[14px] text-emerald-400">check</span>
+              <li className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
                 <span>{billing.paidCredits} paid credit{billing.paidCredits === 1 ? "" : "s"} remaining</span>
               </li>
-              <li className="flex items-center space-x-2">
-                <span className="material-symbols-outlined text-[14px] text-emerald-400">check</span>
-                <span>{billing.hasActivePlan ? "Unlimited watermark-free exports" : "Autonomous cut & beat-sync engine"}</span>
+              <li className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
+                <span>{billing.hasActivePlan ? "Unlimited watermark-free exports" : "AI clip planning & auto-captions"}</span>
               </li>
             </ul>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-3">
             <Link
               href="/pricing"
-              className="flex-1 text-center py-2.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 text-[#241a03] shadow-cf-pill hover:brightness-110 hover:shadow-cf-pill-lg transition-all duration-300"
+              className="flex-1 text-center py-2.5 rounded-full text-xs font-semibold bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150"
             >
               {billing.hasActivePlan ? "Manage plan" : "Buy credits or subscribe"}
             </Link>
             {billing.hasActivePlan && (
               <button
                 onClick={handleCancelPlan}
-                className="text-xs text-zinc-500 hover:text-red-400 underline underline-offset-2 cursor-pointer whitespace-nowrap"
+                className="text-xs text-[#7B7579] hover:text-[#EF4444] underline underline-offset-2 cursor-pointer whitespace-nowrap"
               >
                 Cancel plan
               </button>
             )}
           </div>
-          {planError && <p className="text-xs text-red-400 mt-2">{planError}</p>}
+          {planError && <p className="text-xs text-[#B0503E] mt-2">{planError}</p>}
         </SectionCard>
       </div>
-    </AppShell>
+    </DashboardShell>
   );
 }
