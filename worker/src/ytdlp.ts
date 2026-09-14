@@ -1,8 +1,10 @@
 import ffmpegPath from "ffmpeg-static";
 import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { env } from "./env.js";
 
 const ASSET_BY_PLATFORM: Record<string, string> = {
   win32: "yt-dlp.exe",
@@ -18,6 +20,21 @@ function resolveBinaryPath(): string {
   return join(BIN_DIR, asset);
 }
 
+// Written once per process and reused — the cookies don't change between jobs, so there's no
+// reason to re-write the file on every download. `--cookies-from-browser` (yt-dlp's other cookie
+// option) needs an actual browser profile on disk, which a headless server doesn't have; a
+// Netscape-format file is the only option that works here.
+let cookiesFilePathPromise: Promise<string | null> | null = null;
+
+function resolveCookiesFilePath(): Promise<string | null> {
+  if (!env.YOUTUBE_COOKIES) return Promise.resolve(null);
+  if (!cookiesFilePathPromise) {
+    const path = join(tmpdir(), "cutforge-youtube-cookies.txt");
+    cookiesFilePathPromise = writeFile(path, env.YOUTUBE_COOKIES, "utf-8").then(() => path);
+  }
+  return cookiesFilePathPromise;
+}
+
 // Generous enough for a real slow-but-working download (the first request for a given video can
 // take several minutes — YouTube's own extraction/anti-bot overhead, confirmed against a real
 // video: ~90s+ cold, ~16s once yt-dlp's cache is warm) while still bounding the worst case. This
@@ -25,29 +42,36 @@ function resolveBinaryPath(): string {
 // interactive prompt yt-dlp is silently waiting on) would otherwise block it forever.
 const DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
 
-function runYtDlp(url: string, outputPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const binaryPath = resolveBinaryPath();
-    const args = [
-      url,
-      "-f",
-      // Modern YouTube extraction without a JS runtime (signature deciphering) only exposes
-      // separate video-only/audio-only streams — confirmed against a real download, where a
-      // combined-stream selector like "best[ext=mp4]" failed outright with "Requested format
-      // is not available". bestvideo+bestaudio asks yt-dlp to fetch both and mux them (via the
-      // bundled ffmpeg below) into one file, which works regardless of whether a combined
-      // stream exists. Capped at 1080p since everything downstream re-encodes down to 1280 on
-      // the long edge anyway (see ffmpeg.ts's SCALE_FILTER) — fetching more just wastes bandwidth.
-      "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-      "--merge-output-format",
-      "mp4",
-      "--ffmpeg-location",
-      ffmpegPath as string,
-      "--no-playlist",
-      "-o",
-      outputPath,
-    ];
+async function runYtDlp(url: string, outputPath: string): Promise<void> {
+  const binaryPath = resolveBinaryPath();
+  const cookiesPath = await resolveCookiesFilePath();
 
+  const args = [
+    url,
+    "-f",
+    // Modern YouTube extraction without a JS runtime (signature deciphering) only exposes
+    // separate video-only/audio-only streams — confirmed against a real download, where a
+    // combined-stream selector like "best[ext=mp4]" failed outright with "Requested format
+    // is not available". bestvideo+bestaudio asks yt-dlp to fetch both and mux them (via the
+    // bundled ffmpeg below) into one file, which works regardless of whether a combined
+    // stream exists. Capped at 1080p since everything downstream re-encodes down to 1280 on
+    // the long edge anyway (see ffmpeg.ts's SCALE_FILTER) — fetching more just wastes bandwidth.
+    "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+    "--merge-output-format",
+    "mp4",
+    "--ffmpeg-location",
+    ffmpegPath as string,
+    "--no-playlist",
+    "-o",
+    outputPath,
+  ];
+  // Makes requests look like a logged-in browser session instead of an anonymous request from a
+  // datacenter IP — without this, YouTube outright refuses cloud hosts with "Sign in to confirm
+  // you're not a bot" (confirmed against Railway). Only added when configured; local dev against
+  // a home IP hasn't needed it.
+  if (cookiesPath) args.push("--cookies", cookiesPath);
+
+  return new Promise((resolve, reject) => {
     const proc = spawn(binaryPath, args, { timeout: DOWNLOAD_TIMEOUT_MS, killSignal: "SIGKILL" });
     const stderrTail: string[] = [];
     proc.stderr.on("data", (chunk: Buffer) => {

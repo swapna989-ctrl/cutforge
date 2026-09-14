@@ -18,4 +18,10 @@ export const env = {
   R2_BUCKET_NAME: required("R2_BUCKET_NAME"),
   OPENAI_API_KEY: required("OPENAI_API_KEY"),
   POLL_INTERVAL_MS: Number(process.env.POLL_INTERVAL_MS ?? 4000),
+  // Optional — the Netscape-format cookies.txt contents for a dedicated (throwaway, not a real
+  // user's) YouTube account, used so yt-dlp looks like a logged-in browser instead of an
+  // anonymous request from a datacenter IP. YouTube blocks the latter outright ("Sign in to
+  // confirm you're not a bot") for cloud hosts like Railway. Absent in local dev, where that
+  // block hasn't been observed against a home IP.
+  YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES?.trim() || null,
 };
