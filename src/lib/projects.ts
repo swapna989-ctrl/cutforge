@@ -64,6 +64,9 @@ export async function createProject(input: {
   pipelineStatus: PipelineStatus;
   progress: number;
   sourceKey?: string;
+  /** A YouTube/Twitch (or other yt-dlp-supported) link instead of an uploaded file — the
+   *  worker downloads it and fills in source_key itself before processing starts. */
+  sourceUrl?: string;
   /** Captured once, at upload time, from the user's current billing status — this is what the
    *  worker actually burns into (or omits from) the real output file. */
   watermark: boolean;
@@ -83,6 +86,7 @@ export async function createProject(input: {
       pipeline_status: input.pipelineStatus,
       progress: input.progress,
       source_key: input.sourceKey ?? null,
+      source_url: input.sourceUrl ?? null,
       watermark: input.watermark,
     })
     .select()
@@ -93,13 +97,14 @@ export async function createProject(input: {
 
 export async function updateProject(
   id: string,
-  patch: Partial<{ pipelineStatus: PipelineStatus; progress: number; ratio: Ratio }>
+  patch: Partial<{ pipelineStatus: PipelineStatus; progress: number; ratio: Ratio; sourceKey: string }>
 ): Promise<void> {
   const supabase = createClient();
   const update: Record<string, unknown> = {};
   if (patch.pipelineStatus !== undefined) update.pipeline_status = patch.pipelineStatus;
   if (patch.progress !== undefined) update.progress = patch.progress;
   if (patch.ratio !== undefined) update.ratio = patch.ratio;
+  if (patch.sourceKey !== undefined) update.source_key = patch.sourceKey;
   const { error } = await supabase.from("projects").update(update).eq("id", id);
   if (error) throw error;
 }
@@ -142,6 +147,18 @@ function mapClipRow(row: ProjectClipRow): ProjectClip {
   };
 }
 
+/** Lists a project's clips in position order. RLS scopes this via the parent project's user_id. */
+export async function listProjectClips(projectId: string): Promise<ProjectClip[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("project_clips")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("position", { ascending: true });
+  if (error) throw error;
+  return (data as ProjectClipRow[]).map(mapClipRow);
+}
+
 /**
  * Creates one project_clips row. No user_id to attach here (the table has none) — ownership is
  * enforced entirely by RLS, which checks the parent project's user_id via a join, so this insert
@@ -168,4 +185,25 @@ export async function createProjectClip(input: {
     .single();
   if (error) throw error;
   return mapClipRow(data as ProjectClipRow);
+}
+
+/** Patches one project_clips row — used for renumbering after a removal and for Replace. */
+export async function updateProjectClip(
+  id: string,
+  patch: Partial<{ position: number; sourceKey: string; fileName: string; duration: number | null }>
+): Promise<void> {
+  const supabase = createClient();
+  const update: Record<string, unknown> = {};
+  if (patch.position !== undefined) update.position = patch.position;
+  if (patch.sourceKey !== undefined) update.source_key = patch.sourceKey;
+  if (patch.fileName !== undefined) update.file_name = patch.fileName;
+  if (patch.duration !== undefined) update.duration = patch.duration;
+  const { error } = await supabase.from("project_clips").update(update).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteProjectClip(id: string): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.from("project_clips").delete().eq("id", id);
+  if (error) throw error;
 }

@@ -16,6 +16,10 @@ export type ProjectRow = {
   pipeline_status: "idle" | "ingesting" | "queued" | "synthesizing" | "ready" | "failed";
   progress: number;
   source_key: string | null;
+  // Set when the project came from a pasted link instead of an upload — the worker downloads
+  // from here and populates source_key itself; from that point on it's indistinguishable from
+  // an uploaded project.
+  source_url: string | null;
   output_key: string | null;
   status_message: string | null;
   error_message: string | null;
@@ -70,4 +74,48 @@ export async function getProjectClips(projectId: string): Promise<ProjectClipRow
     .order("position", { ascending: true });
   if (error) throw error;
   return data ?? [];
+}
+
+export type ShortRow = {
+  id: string;
+  project_id: string;
+  position: number;
+  source_start_seconds: number;
+  source_end_seconds: number;
+  hook: string;
+  caption: string;
+  // LLM-estimated, not measured (no posted-clip performance data exists yet) — see
+  // clipPlanner.ts's ClipCandidate.viralScore for what it actually represents.
+  viral_score: number | null;
+  status: "pending" | "processing" | "ready" | "failed";
+  output_key: string | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+/** Inserts one `pending` short row per planned candidate, in position order — done up front
+ *  (before any rendering starts) so the plan itself is visible/durable even if rendering fails
+ *  partway through. */
+export async function createShorts(
+  projectId: string,
+  candidates: { startTime: number; endTime: number; hook: string; caption: string; viralScore: number }[]
+): Promise<ShortRow[]> {
+  const rows = candidates.map((c, i) => ({
+    project_id: projectId,
+    position: i,
+    source_start_seconds: c.startTime,
+    source_end_seconds: c.endTime,
+    hook: c.hook,
+    caption: c.caption,
+    viral_score: c.viralScore,
+    status: "pending" as const,
+  }));
+  const { data, error } = await supabase.from("shorts").insert(rows).select("*");
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function updateShort(id: string, patch: Partial<ShortRow>): Promise<void> {
+  const { error } = await supabase.from("shorts").update(patch).eq("id", id);
+  if (error) throw error;
 }

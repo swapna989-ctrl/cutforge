@@ -2,7 +2,7 @@ import ffmpegPath from "ffmpeg-static";
 import ffprobePath from "ffprobe-static";
 import ffmpeg from "fluent-ffmpeg";
 import { spawn } from "node:child_process";
-import { copyFile, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -110,6 +110,22 @@ export function getDuration(inputPath: string): Promise<number> {
   });
 }
 
+/** Probes the real output dimensions — used to place captions proportionally (e.g. "bottom
+ *  third") since a fixed pixel margin would land in a different spot on every resolution this
+ *  pipeline can produce (multi-clip's fixed targets, or the single-clip path's source-scaled one). */
+export function getVideoDimensions(inputPath: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inputPath, (err, data) => {
+      if (err) return reject(err);
+      const videoStream = data.streams.find((s) => s.codec_type === "video");
+      if (!videoStream?.width || !videoStream?.height) {
+        return reject(new Error(`Could not determine video dimensions for ${inputPath}`));
+      }
+      resolve({ width: videoStream.width, height: videoStream.height });
+    });
+  });
+}
+
 /**
  * Decodes the source exactly once at its native resolution/codec and re-encodes it down to the
  * capped resolution immediately. Without this, cutSilences would re-open and re-decode the
@@ -194,6 +210,24 @@ export async function cutSilences(
 
   await runFfmpeg(
     ffmpeg().input(listPath).inputOptions(["-f", "concat", "-safe", "0"]).outputOptions(["-c", "copy"]),
+    outputPath
+  );
+}
+
+/**
+ * Extracts [startSeconds, endSeconds) from inputPath as its own standalone file — used to cut
+ * one AI Clip Planner candidate out of the (already normalized and dead-air-trimmed) source.
+ * Re-encodes rather than stream-copying, for the same reason cutSilences' own segment
+ * extraction does: `-ss`/`-t` with stream copy only seeks to the nearest keyframe, which is
+ * imprecise, while re-encoding gives a frame-accurate cut at the planner's exact timestamps.
+ */
+export function extractClipRange(inputPath: string, startSeconds: number, endSeconds: number, outputPath: string): Promise<void> {
+  return runFfmpeg(
+    ffmpeg(inputPath)
+      .inputOptions(DECODE_OPTS)
+      .setStartTime(startSeconds)
+      .duration(endSeconds - startSeconds)
+      .outputOptions(["-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac", "-avoid_negative_ts", "make_zero"]),
     outputPath
   );
 }
@@ -305,15 +339,118 @@ function escapeFfmpegPath(p: string): string {
   return `'${p.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
 }
 
+type SrtCue = { start: string; end: string; text: string };
+
+/** "00:00:01,960" (SRT) -> "0:00:01.96" (ASS: H:MM:SS.CC, centiseconds). */
+function srtTimeToAssTime(t: string): string {
+  const m = t.match(/(\d+):(\d{2}):(\d{2}),(\d{3})/);
+  if (!m) return "0:00:00.00";
+  const hours = parseInt(m[1], 10);
+  const centiseconds = Math.round(parseInt(m[4], 10) / 10)
+    .toString()
+    .padStart(2, "0");
+  return `${hours}:${m[2]}:${m[3]}.${centiseconds}`;
+}
+
+function parseSrt(content: string): SrtCue[] {
+  return content
+    .split(/\r?\n\r?\n/)
+    .map((b) => b.trim())
+    .filter(Boolean)
+    .flatMap((block) => {
+      const lines = block.split(/\r?\n/);
+      const match = lines[1]?.match(/([\d:,]+)\s*-->\s*([\d:,]+)/);
+      if (!match) return [];
+      // A real newline in the SRT text (from transcribe.ts's 2-line chunking) becomes ASS's
+      // own line-break escape here, not a literal newline in the .ass file.
+      const text = lines.slice(2).join("\\N");
+      return [{ start: srtTimeToAssTime(match[1]), end: srtTimeToAssTime(match[2]), text }];
+    });
+}
+
+/**
+ * Builds a complete .ass document with its own PlayResX/PlayResY set to the REAL output
+ * dimensions. This is necessary, not cosmetic: feeding a plain .srt straight into the subtitles
+ * filter (via force_style) renders MarginV against libass's own default script resolution rather
+ * than the actual video frame — confirmed against a real 1280-tall render where a MarginV
+ * computed from the true height still landed captions near mid-frame instead of the bottom
+ * third. Declaring PlayResX/Y ourselves, matching the real frame, removes that ambiguity: every
+ * pixel value in the style below maps 1:1 onto the actual output.
+ */
+function buildAssDocument(cues: SrtCue[], width: number, height: number, marginV: number): string {
+  // BorderStyle=1 is libass's "outline" style (as opposed to 3, "opaque box") — Outline is then
+  // the stroke width in pixels and OutlineColour the stroke's own color, fully opaque so it reads
+  // as a clean stroke rather than a tinted box. Alignment=2 is bottom-center; MarginV keeps the
+  // caption block inside the bottom third without pinning it to the very edge; MarginL/R keep it
+  // off the side edges.
+  const style = [
+    "Default",
+    FONT_NAME,
+    "20",
+    "&H00FFFFFF", // PrimaryColour: opaque white
+    "&H000000FF", // SecondaryColour: unused (karaoke only)
+    "&H00000000", // OutlineColour: opaque black
+    "&H00000000", // BackColour: unused (only applies to BorderStyle 3's box fill)
+    "0",
+    "0",
+    "0",
+    "0", // Bold, Italic, Underline, StrikeOut
+    "100",
+    "100",
+    "0",
+    "0", // ScaleX, ScaleY, Spacing, Angle
+    "1", // BorderStyle: outline, not opaque box
+    "5", // Outline width in px
+    "0", // Shadow
+    "2", // Alignment: bottom-center
+    "48",
+    "48",
+    String(marginV), // MarginL, MarginR, MarginV
+    "1", // Encoding
+  ].join(",");
+
+  const events = cues.map((c) => `Dialogue: 0,${c.start},${c.end},Default,,0,0,0,,${c.text}`).join("\n");
+
+  return `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${width}
+PlayResY: ${height}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: ${style}
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${events}
+`;
+}
+
 /**
  * Burns in captions and, for free-tier exports, a watermark — this is the actual enforcement
  * of the paywall on the real file, not just a UI preview. `watermark` is decided once, at
  * upload time, from the user's billing status then (see projects.watermark).
+ *
+ * `outputWidth`/`outputHeight` are the real dimensions of `inputPath` (see getVideoDimensions) —
+ * see buildAssDocument for why they matter.
  */
-export function finalizeVideo(inputPath: string, srtPath: string, watermark: boolean, outputPath: string): Promise<void> {
-  const escapedSrtPath = escapeFfmpegPath(srtPath);
-  const captionStyle = `FontName=${FONT_NAME},FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=70`;
-  const subtitlesFilter = `subtitles=${escapedSrtPath}:force_style='${captionStyle}':fontsdir=${escapedFontsDir}`;
+export async function finalizeVideo(
+  inputPath: string,
+  srtPath: string,
+  watermark: boolean,
+  outputWidth: number,
+  outputHeight: number,
+  outputPath: string
+): Promise<void> {
+  const srtContent = await readFile(srtPath, "utf-8");
+  const cues = parseSrt(srtContent);
+  const marginV = Math.round(outputHeight * 0.1);
+  const assPath = srtPath.replace(/\.srt$/i, ".ass");
+  await writeFile(assPath, buildAssDocument(cues, outputWidth, outputHeight, marginV), "utf-8");
+
+  const escapedAssPath = escapeFfmpegPath(assPath);
+  const subtitlesFilter = `subtitles=${escapedAssPath}:fontsdir=${escapedFontsDir}`;
 
   const command = ffmpeg(inputPath).inputOptions(DECODE_OPTS);
 

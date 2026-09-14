@@ -3,22 +3,26 @@ import { tmpdir, cpus, totalmem, freemem } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
+import { downloadFromUrl } from "./ytdlp.js";
 import {
   detectSilences,
   getDuration,
+  getVideoDimensions,
   cutSilences,
   extractAudio,
+  extractClipRange,
   finalizeVideo,
   normalizeResolution,
   normalizeToTargetResolution,
   multiClipTargetDimensions,
   concatClips,
 } from "./ffmpeg.js";
-import { transcribeToSrt } from "./transcribe.js";
-import { updateJob, getProjectClips, type ProjectRow } from "./supabase.js";
+import { transcribeToSrt, transcribeSegments } from "./transcribe.js";
+import { planClips } from "./clipPlanner.js";
+import { updateJob, getProjectClips, createShorts, updateShort, type ProjectRow } from "./supabase.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
-export const WORKER_BUILD = "2026-09-12-transcribe-retry";
+export const WORKER_BUILD = "2026-09-14-ai-clip-planner";
 
 const MB = 1024 * 1024;
 
@@ -42,9 +46,6 @@ export async function processJob(job: ProjectRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-"));
   const normalizedPath = join(tmpDir, "normalized.mp4");
   const trimmedPath = join(tmpDir, "trimmed.mp4");
-  const audioPath = join(tmpDir, "audio.mp3");
-  const srtPath = join(tmpDir, "captions.srt");
-  const finalPath = join(tmpDir, "final.mp4");
 
   try {
     const clips = await getProjectClips(job.id);
@@ -78,11 +79,25 @@ export async function processJob(job: ProjectRow): Promise<void> {
       await updateJob(job.id, { status_message: "Combining clips…", progress: 20 });
       await concatClips(clipPaths, normalizedPath, tmpDir);
     } else {
-      if (!job.source_key) throw new Error("Job has no source_key");
       const sourcePath = join(tmpDir, "source.mp4");
 
-      await updateJob(job.id, { status_message: "Downloading your clip…", progress: 10 });
-      await downloadToFile(job.source_key, sourcePath);
+      if (job.source_url && !job.source_key) {
+        // Link-based project: fetch the real video first, then persist it to R2 exactly like an
+        // uploaded file would be (same key pattern, same bucket) — everything from here on
+        // (normalize, dead-air removal, transcription, clip planning) is completely unaware
+        // whether the source arrived via upload or a link.
+        await updateJob(job.id, { status_message: "Downloading from link…", progress: 5 });
+        await downloadFromUrl(job.source_url, sourcePath);
+
+        await updateJob(job.id, { status_message: "Saving source…", progress: 8 });
+        const sourceKey = `${job.user_id}/source/${randomUUID()}.mp4`;
+        await uploadFromFile(sourcePath, sourceKey, "video/mp4");
+        await updateJob(job.id, { source_key: sourceKey });
+      } else {
+        if (!job.source_key) throw new Error("Job has no source_key and no source_url");
+        await updateJob(job.id, { status_message: "Downloading your clip…", progress: 10 });
+        await downloadToFile(job.source_key, sourcePath);
+      }
 
       // Decodes the (possibly 4K/HEVC) source exactly once and re-encodes it down to a capped
       // resolution — every step after this works off the much cheaper result, which is what
@@ -98,22 +113,68 @@ export async function processJob(job: ProjectRow): Promise<void> {
     await updateJob(job.id, { status_message: "Removing dead air & filler pauses…", progress: 40 });
     await cutSilences(normalizedPath, silences, duration, trimmedPath, tmpDir);
 
-    await updateJob(job.id, { status_message: "Transcribing audio…", progress: 60 });
-    await extractAudio(trimmedPath, audioPath);
-    await transcribeToSrt(audioPath, srtPath);
+    // From here on the source is a single, clean (dead-air-trimmed) video — the AI Clip Planner
+    // reasons over that ONE transcript/timeline once, rather than per-candidate, so planning
+    // stays a single Whisper + LLM call regardless of how many shorts eventually get rendered.
+    await updateJob(job.id, { status_message: "Analyzing transcript for clip-worthy moments…", progress: 50 });
+    const planningAudioPath = join(tmpDir, "planning-audio.mp3");
+    await extractAudio(trimmedPath, planningAudioPath);
+    const segments = await transcribeSegments(planningAudioPath);
+    const trimmedDuration = await getDuration(trimmedPath);
 
-    await updateJob(job.id, { status_message: "Generating captions…", progress: 80 });
-    await finalizeVideo(trimmedPath, srtPath, job.watermark, finalPath);
+    await updateJob(job.id, { status_message: "Planning clips…", progress: 55 });
+    const candidates = await planClips(segments, trimmedDuration);
+    const shorts = await createShorts(job.id, candidates);
 
-    await updateJob(job.id, { status_message: "Uploading your master…", progress: 95 });
-    const outputKey = `${job.user_id}/output/${randomUUID()}.mp4`;
-    await uploadFromFile(finalPath, outputKey, "video/mp4");
+    // Each short is rendered independently, through the same download-free steps the old
+    // single-output path used (extract -> transcribe -> caption -> watermark -> upload) — one
+    // short failing to render is recorded on that short and doesn't take the others down with it.
+    let readyCount = 0;
+    for (let i = 0; i < shorts.length; i++) {
+      const short = shorts[i];
+      const candidate = candidates[i];
+      const renderProgress = 60 + Math.round((i / shorts.length) * 35);
+      await updateJob(job.id, {
+        status_message: `Rendering short ${i + 1} of ${shorts.length}…`,
+        progress: renderProgress,
+      });
+
+      try {
+        await updateShort(short.id, { status: "processing" });
+
+        const clipPath = join(tmpDir, `short-${i}.mp4`);
+        const clipAudioPath = join(tmpDir, `short-${i}-audio.mp3`);
+        const clipSrtPath = join(tmpDir, `short-${i}.srt`);
+        const clipFinalPath = join(tmpDir, `short-${i}-final.mp4`);
+
+        await extractClipRange(trimmedPath, candidate.startTime, candidate.endTime, clipPath);
+        await extractAudio(clipPath, clipAudioPath);
+        await transcribeToSrt(clipAudioPath, clipSrtPath);
+        const clipDimensions = await getVideoDimensions(clipPath);
+        await finalizeVideo(clipPath, clipSrtPath, job.watermark, clipDimensions.width, clipDimensions.height, clipFinalPath);
+
+        const shortOutputKey = `${job.user_id}/shorts/${randomUUID()}.mp4`;
+        await uploadFromFile(clipFinalPath, shortOutputKey, "video/mp4");
+
+        await updateShort(short.id, { status: "ready", output_key: shortOutputKey });
+        readyCount++;
+      } catch (err) {
+        console.error(`Short ${short.id} (project ${job.id}) failed:`, err);
+        const detail = err instanceof Error ? err.message : String(err);
+        await updateShort(short.id, { status: "failed", error_message: detail }).catch((updateErr) =>
+          console.error("Also failed to record the short's failure:", updateErr)
+        );
+      }
+    }
+
+    if (readyCount === 0) {
+      throw new Error(`All ${shorts.length} planned shorts failed to render`);
+    }
 
     await updateJob(job.id, {
       pipeline_status: "ready",
       progress: 100,
-      output_key: outputKey,
-      status_message: "Master ready.",
+      status_message: `${readyCount} of ${shorts.length} shorts ready.`,
     });
   } catch (err) {
     console.error(`Job ${job.id} failed:`, err);
