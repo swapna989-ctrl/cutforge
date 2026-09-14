@@ -66,6 +66,10 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   // existed; that case keeps falling through to the MediaStage/ExportPanel preview below exactly
   // as it did before this existed.
   const [shorts, setShorts] = useState<Short[]>([]);
+  // Resuming an already-"ready" project starts `shorts` at [] before the real fetch below has
+  // had a chance to run — without this flag, that brief real gap reads as "no shorts, fall back
+  // to the legacy single-output view" and flashes it before flipping to the gallery.
+  const [shortsChecked, setShortsChecked] = useState(false);
 
   // Pick up the user's saved default ratio for brand-new (non-resumed) projects, once prefs load.
   useEffect(() => {
@@ -140,9 +144,13 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     let cancelled = false;
     listShorts(id)
       .then((rows) => {
-        if (!cancelled) setShorts(rows);
+        if (cancelled) return;
+        setShorts(rows);
+        setShortsChecked(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setShortsChecked(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -420,6 +428,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     setLocalPreviewUrl(null);
     setRealPreviewUrl(null);
     setShorts([]);
+    setShortsChecked(false);
     setProgress(0);
     setStatusMessage(null);
     setErrorMessage(null);
@@ -510,37 +519,52 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     }
   }
 
+  // A resumed "ready" project starts with an empty shorts array before the real fetch above has
+  // resolved — without this, that gap briefly renders as "no shorts, must be legacy" and flashes
+  // the old MediaStage view before flipping to the gallery a moment later.
+  const awaitingShortsCheck = status === "ready" && !shortsChecked;
+  const showGallery = status === "ready" && shortsChecked && shorts.length > 0;
+
   return (
-    <WorkspaceShell projectName={fileName} status={status}>
+    <WorkspaceShell status={status}>
       <div className="space-y-5">
-        <div className="flex items-center justify-between">
-          <div className="inline-flex items-center p-1 rounded-full bg-[#F5F1EA] border border-[#E8E2D6] shadow-inner">
-            <button
-              onClick={() => handleSetRatio("9:16")}
-              className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
-                ratio === "9:16" ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
-              }`}
-            >
-              <span className="material-symbols-outlined text-[14px]">stay_current_portrait</span>
-              <span>9:16</span>
-            </button>
-            <button
-              onClick={() => handleSetRatio("16:9")}
-              className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
-                ratio === "16:9" ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
-              }`}
-            >
-              <span className="material-symbols-outlined text-[14px]">crop_16_9</span>
-              <span>16:9</span>
-            </button>
+        {/* Changing ratio after clips already exist wouldn't do anything real — they're already
+            rendered — so this only shows before that point (and not while it's still ambiguous
+            whether this project even has any). */}
+        {!showGallery && !awaitingShortsCheck && (
+          <div className="flex items-center justify-between">
+            <div className="inline-flex items-center p-1 rounded-full bg-[#F5F1EA] border border-[#E8E2D6] shadow-inner">
+              <button
+                onClick={() => handleSetRatio("9:16")}
+                className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
+                  ratio === "9:16" ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[14px]">stay_current_portrait</span>
+                <span>9:16</span>
+              </button>
+              <button
+                onClick={() => handleSetRatio("16:9")}
+                className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
+                  ratio === "16:9" ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[14px]">crop_16_9</span>
+                <span>16:9</span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {uploadError && <p className="text-center text-xs text-[#B0503E] font-mono">{uploadError}</p>}
         {downloadError && <p className="text-center text-xs text-[#B0503E] font-mono">{downloadError}</p>}
 
-        {status === "ready" && shorts.length > 0 ? (
-          <ShortsGallery projectId={projectIdRef.current!} projectName={fileName} shorts={shorts} onShortsChange={setShorts} />
+        {awaitingShortsCheck ? (
+          <div className="flex items-center justify-center py-24">
+            <div className="w-6 h-6 rounded-full border-2 border-[#E8E2D6] border-t-[#A8724A] animate-spin" />
+          </div>
+        ) : showGallery ? (
+          <ShortsGallery projectId={projectIdRef.current!} shorts={shorts} onShortsChange={setShorts} />
         ) : (
           <>
             <MediaStage
