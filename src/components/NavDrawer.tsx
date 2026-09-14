@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
@@ -36,6 +37,13 @@ export default function NavDrawer() {
   const { user, logout } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  // A portal target only exists once mounted in the browser — on the server (and for the one
+  // render before hydration) there's no document.body to render into yet.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reacting to "we're now in the browser post-hydration", an external fact, not derivable from props/state
+    setMounted(true);
+  }, []);
 
   // Collapse the profile dropdown whenever the drawer itself closes, so it doesn't reopen
   // still-expanded next time.
@@ -59,7 +67,12 @@ export default function NavDrawer() {
         <span className="material-symbols-outlined text-[24px]">menu</span>
       </button>
 
-      {drawerOpen && (
+      {/* Rendered via a portal straight to <body> — a header with backdrop-blur (WorkspaceShell)
+          creates a new containing block for any `position: fixed` descendant, which would
+          otherwise trap this "full-screen" backdrop/drawer inside the header's own small box
+          instead of the viewport. A portal makes that impossible regardless of what any future
+          ancestor does with filters/transforms. */}
+      {mounted && drawerOpen && createPortal(
         <>
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onClick={closeDrawer} />
           <aside className="fixed top-0 left-0 h-full w-[82%] max-w-[320px] bg-white z-50 shadow-[8px_0_40px_-4px_rgba(33,25,28,0.22)] flex flex-col border-r border-[#ECE5E6]">
@@ -148,7 +161,8 @@ export default function NavDrawer() {
               </div>
             </nav>
           </aside>
-        </>
+        </>,
+        document.body
       )}
     </>
   );
