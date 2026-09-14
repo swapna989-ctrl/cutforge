@@ -30,7 +30,12 @@ function resolveCookiesFilePath(): Promise<string | null> {
   if (!env.YOUTUBE_COOKIES) return Promise.resolve(null);
   if (!cookiesFilePathPromise) {
     const path = join(tmpdir(), "cutforge-youtube-cookies.txt");
-    cookiesFilePathPromise = writeFile(path, env.YOUTUBE_COOKIES, "utf-8").then(() => path);
+    cookiesFilePathPromise = writeFile(path, env.YOUTUBE_COOKIES, "utf-8").then(() => {
+      // Byte count only, never the contents — enough to catch "the env var is empty/truncated"
+      // without logging session cookies anywhere.
+      console.log(`[ytdlp] wrote cookies file: ${env.YOUTUBE_COOKIES?.length ?? 0} chars`);
+      return path;
+    });
   }
   return cookiesFilePathPromise;
 }
@@ -45,6 +50,9 @@ const DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
 async function runYtDlp(url: string, outputPath: string): Promise<void> {
   const binaryPath = resolveBinaryPath();
   const cookiesPath = await resolveCookiesFilePath();
+  // Real diagnostic, not a guess — every past failure required inferring whether cookies were
+  // even in play from indirect evidence (which error message came back). This says so directly.
+  console.log(cookiesPath ? `[ytdlp] using cookies file at ${cookiesPath}` : "[ytdlp] YOUTUBE_COOKIES not configured — no cookies file");
 
   const args = [
     url,
@@ -78,7 +86,7 @@ async function runYtDlp(url: string, outputPath: string): Promise<void> {
       for (const line of chunk.toString().split("\n")) {
         if (!line.trim()) continue;
         stderrTail.push(line);
-        if (stderrTail.length > 25) stderrTail.shift();
+        if (stderrTail.length > 60) stderrTail.shift();
       }
     });
 
