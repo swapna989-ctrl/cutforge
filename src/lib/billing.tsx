@@ -3,32 +3,60 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/client";
+import type { PlanTier, BillingCycle } from "@/lib/pricing";
 
-export type Plan = "none" | "weekly" | "monthly" | "yearly";
+export type { PlanTier, BillingCycle };
 
 type BillingData = {
   freeCredits: number;
   paidCredits: number;
-  plan: Plan;
+  planTier: PlanTier;
+  billingCycle: BillingCycle;
+  planCredits: number;
+  planRenewsAt: string | null;
 };
 
-const DEFAULT_DATA: BillingData = { freeCredits: 0, paidCredits: 0, plan: "none" };
+const DEFAULT_DATA: BillingData = {
+  freeCredits: 0,
+  paidCredits: 0,
+  planTier: "none",
+  billingCycle: "monthly",
+  planCredits: 0,
+  planRenewsAt: null,
+};
 
-type BillingRow = { free_credits: number; paid_credits: number; plan: string };
+type BillingRow = {
+  free_credits: number;
+  paid_credits: number;
+  plan_tier: string;
+  billing_cycle: string;
+  plan_credits: number;
+  plan_renews_at: string | null;
+};
 
 function mapRow(row: BillingRow): BillingData {
-  return { freeCredits: row.free_credits, paidCredits: row.paid_credits, plan: row.plan as Plan };
+  return {
+    freeCredits: row.free_credits,
+    paidCredits: row.paid_credits,
+    planTier: row.plan_tier as PlanTier,
+    billingCycle: row.billing_cycle as BillingCycle,
+    planCredits: row.plan_credits,
+    planRenewsAt: row.plan_renews_at,
+  };
 }
 
 type BillingContextValue = {
   freeCredits: number;
   paidCredits: number;
-  plan: Plan;
+  planTier: PlanTier;
+  billingCycle: BillingCycle;
+  planCredits: number;
+  planRenewsAt: string | null;
   ready: boolean;
   hasActivePlan: boolean;
   /** True when the next export won't carry the CutForge watermark. */
   isWatermarkFree: boolean;
-  /** True when there's any credit or plan left to export with (watermarked or not). */
+  /** True when there's any credit or plan allowance left to export with (watermarked or not). */
   canExport: boolean;
   /**
    * Call once per video submitted for clipping (see ClippingPage) — not per short downloaded.
@@ -37,10 +65,11 @@ type BillingContextValue = {
    * Enforced server-side (a Postgres function, not a plain table update) — the client can't just
    * set its own balance, and this can genuinely fail (e.g. a race with another tab draining the
    * last credit), so callers must handle the returned error rather than assume it always succeeds.
+   * Spends this month's plan allowance first, then paid credits, then free credits.
    */
   consumeExportCredit: () => Promise<{ error: string | null }>;
   buyCreditPack: (amount: number) => Promise<{ error: string | null }>;
-  subscribe: (plan: Plan) => Promise<{ error: string | null }>;
+  subscribe: (tier: Exclude<PlanTier, "none">, cycle: BillingCycle) => Promise<{ error: string | null }>;
   cancelPlan: () => Promise<{ error: string | null }>;
 };
 
@@ -62,7 +91,7 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     const supabase = createClient();
     supabase
       .from("billing")
-      .select("free_credits, paid_credits, plan")
+      .select("free_credits, paid_credits, plan_tier, billing_cycle, plan_credits, plan_renews_at")
       .eq("user_id", user.id)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -84,9 +113,9 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   }, [authReady, user?.id]);
 
   const { data } = state;
-  const hasActivePlan = data.plan !== "none";
+  const hasActivePlan = data.planTier !== "none";
   const isWatermarkFree = hasActivePlan || data.paidCredits > 0;
-  const canExport = hasActivePlan || data.paidCredits > 0 || data.freeCredits > 0;
+  const canExport = (hasActivePlan && data.planCredits > 0) || data.paidCredits > 0 || data.freeCredits > 0;
 
   async function callBillingRpc(fn: string, args?: Record<string, unknown>): Promise<{ error: string | null }> {
     const supabase = createClient();
@@ -104,12 +133,12 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     return callBillingRpc("buy_credit_pack", { amount });
   }
 
-  function subscribe(plan: Plan) {
-    return callBillingRpc("set_subscription_plan", { new_plan: plan });
+  function subscribe(tier: Exclude<PlanTier, "none">, cycle: BillingCycle) {
+    return callBillingRpc("set_subscription_tier", { new_tier: tier, new_cycle: cycle });
   }
 
   function cancelPlan() {
-    return callBillingRpc("set_subscription_plan", { new_plan: "none" });
+    return callBillingRpc("set_subscription_tier", { new_tier: "none" });
   }
 
   return (
@@ -117,7 +146,10 @@ export function BillingProvider({ children }: { children: ReactNode }) {
       value={{
         freeCredits: data.freeCredits,
         paidCredits: data.paidCredits,
-        plan: data.plan,
+        planTier: data.planTier,
+        billingCycle: data.billingCycle,
+        planCredits: data.planCredits,
+        planRenewsAt: data.planRenewsAt,
         ready: state.ready,
         hasActivePlan,
         isWatermarkFree,

@@ -99,8 +99,8 @@ export default function ExportPanel({
           {frozen ? (
             frozen.label
           ) : effectiveWatermarkFree ? (
-            billing.hasActivePlan ? (
-              "No watermark · unlimited exports on your plan"
+            billing.hasActivePlan && billing.planCredits > 0 ? (
+              `No watermark · ${billing.planCredits} clip${billing.planCredits === 1 ? "" : "s"} left this month`
             ) : (
               `No watermark · ${billing.paidCredits} paid credit${billing.paidCredits === 1 ? "" : "s"} left`
             )

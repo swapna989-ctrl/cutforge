@@ -462,8 +462,8 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     // or not, decided once at upload time (see projects.watermark).
     const watermarkFree = billing.isWatermarkFree;
     const label = watermarkFree
-      ? billing.hasActivePlan
-        ? "No watermark · unlimited exports on your plan"
+      ? billing.hasActivePlan && billing.planCredits > 0
+        ? `No watermark · ${billing.planCredits - 1} clip${billing.planCredits - 1 === 1 ? "" : "s"} left this month`
         : `No watermark · ${billing.paidCredits - 1} paid credit${billing.paidCredits - 1 === 1 ? "" : "s"} left`
       : `Includes CutForge watermark (${billing.freeCredits - 1} free export${billing.freeCredits - 1 === 1 ? "" : "s"} left)`;
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import NavDrawer, { BrandMark } from "@/components/NavDrawer";
 import { useBilling } from "@/lib/billing";
+import { TIER_LABEL } from "@/lib/pricing";
 
 /**
  * Visual redesign only — same real useAuth/useBilling/usePathname wiring as before, just
@@ -11,7 +12,9 @@ import { useBilling } from "@/lib/billing";
  */
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const billing = useBilling();
-  const creditsLabel = billing.hasActivePlan ? "Plan active" : `${billing.freeCredits + billing.paidCredits} credits`;
+  const creditsLabel = billing.hasActivePlan
+    ? `${TIER_LABEL[billing.planTier]} · ${billing.planCredits} left`
+    : `${billing.freeCredits + billing.paidCredits} credits`;
 
   return (
     <div className="min-h-screen bg-[#FAF8F7]">

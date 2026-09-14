@@ -6,12 +6,11 @@ import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
 import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
-import { useBilling, type Plan } from "@/lib/billing";
+import { useBilling } from "@/lib/billing";
+import { TIER_LABEL } from "@/lib/pricing";
 import type { Ratio } from "@/lib/pipeline";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
-
-const PLAN_LABEL: Record<Plan, string> = { none: "Free plan", weekly: "Weekly plan", monthly: "Monthly plan", yearly: "Yearly plan" };
 
 function SectionCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
@@ -174,7 +173,9 @@ export default function SettingsPage() {
         <SectionCard title="Plan & billing" description="Your current CutForge plan and credit balance.">
           <div className="rounded-xl border border-[#ECE5E6] bg-[#FAF8F7] px-4 py-4 mb-4">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold text-[#1d1b1e]">{billing.ready ? PLAN_LABEL[billing.plan] : "Loading…"}</span>
+              <span className="text-sm font-semibold text-[#1d1b1e]">
+                {billing.ready ? (billing.hasActivePlan ? `${TIER_LABEL[billing.planTier]} plan` : "Free plan") : "Loading…"}
+              </span>
               {billing.hasActivePlan && (
                 <span className="px-2 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[10px] font-semibold uppercase tracking-wide">
                   Active
@@ -182,6 +183,15 @@ export default function SettingsPage() {
               )}
             </div>
             <ul className="space-y-1.5 text-xs text-[#544244]">
+              {billing.hasActivePlan && (
+                <li className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
+                  <span>
+                    {billing.planCredits} clip{billing.planCredits === 1 ? "" : "s"} remaining this month
+                    {billing.billingCycle === "yearly" ? " (billed yearly)" : ""}
+                  </span>
+                </li>
+              )}
               <li className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
                 <span>{billing.freeCredits} free credit{billing.freeCredits === 1 ? "" : "s"} remaining</span>
@@ -192,7 +202,7 @@ export default function SettingsPage() {
               </li>
               <li className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
-                <span>{billing.hasActivePlan ? "Unlimited watermark-free exports" : "AI clip planning & auto-captions"}</span>
+                <span>{billing.hasActivePlan ? "Watermark-free exports" : "AI clip planning & auto-captions"}</span>
               </li>
             </ul>
           </div>
