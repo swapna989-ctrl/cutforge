@@ -8,6 +8,18 @@ const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY, maxRetries: 4, timeout: 
 type Word = { word: string; start: number; end: number };
 export type TranscriptSegment = { start: number; end: number; text: string };
 
+export type CaptionLanguage = "auto" | "hinglish";
+
+// Whisper has no dedicated "output Hinglish" mode — it transcribes in the spoken language's own
+// native script by default (Devanagari for Hindi audio), and there's no parameter that changes
+// that directly. `prompt` is documented as biasing vocabulary/style toward a sample of text, and
+// giving it a real Romanized Hindi-English sentence is the closest real lever to nudge output
+// that way. This is a best-effort bias, not a guarantee — Whisper can still drift back to
+// Devanagari partway through a longer clip, which is why this is opt-in (see caption_language)
+// rather than always applied.
+const HINGLISH_PROMPT_HINT =
+  "Yaar, aaj maine ek bahut hi zabardast video banaya hai, isko dekhkar aapko bhi maza aayega, chalo shuru karte hain.";
+
 export type CaptionWord = { text: string; start: number; end: number };
 /**
  * One on-screen caption burst — up to 2 lines, each word keeping its own real Whisper timestamp
@@ -108,12 +120,12 @@ function chunkWords(words: Word[]): CaptionChunk[] {
  * makes accurately-synced captions — including per-word highlight timing — possible; the
  * newer/cheaper transcribe models don't.
  */
-export async function transcribeCaptions(audioPath: string): Promise<CaptionChunk[]> {
+export async function transcribeCaptions(audioPath: string, language: CaptionLanguage = "auto"): Promise<CaptionChunk[]> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
 
   const { size: audioBytes } = await stat(audioPath);
-  console.log(`Transcribing ${audioPath}: ${audioBytes} bytes`);
+  console.log(`Transcribing ${audioPath}: ${audioBytes} bytes (language=${language})`);
   if (audioBytes < 1000) {
     // A near-empty audio file (extraction produced silence/nothing) will make Whisper return
     // zero segments every time — no amount of retrying an API call fixes a bad input file, and
@@ -132,6 +144,7 @@ export async function transcribeCaptions(audioPath: string): Promise<CaptionChun
         // bursts possible — a segment can be a whole sentence, which is exactly the "3-4 lines
         // at once" behavior this replaces.
         timestamp_granularities: ["word"],
+        ...(language === "hinglish" ? { prompt: HINGLISH_PROMPT_HINT } : {}),
       });
 
       const words = (response as unknown as { words?: Word[] }).words ?? [];
@@ -162,12 +175,12 @@ export async function transcribeCaptions(audioPath: string): Promise<CaptionChun
  * neither function's behavior depends on the other; worth merging into one "word"+"segment"
  * call once both are actually used together in the same job.
  */
-export async function transcribeSegments(audioPath: string): Promise<TranscriptSegment[]> {
+export async function transcribeSegments(audioPath: string, language: CaptionLanguage = "auto"): Promise<TranscriptSegment[]> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
 
   const { size: audioBytes } = await stat(audioPath);
-  console.log(`Transcribing ${audioPath} for clip planning: ${audioBytes} bytes`);
+  console.log(`Transcribing ${audioPath} for clip planning: ${audioBytes} bytes (language=${language})`);
   if (audioBytes < 1000) {
     throw new Error(`Extracted audio is suspiciously small (${audioBytes} bytes) — likely a broken extraction, not a transcription issue`);
   }
@@ -179,6 +192,7 @@ export async function transcribeSegments(audioPath: string): Promise<TranscriptS
         model: "whisper-1",
         response_format: "verbose_json",
         timestamp_granularities: ["segment"],
+        ...(language === "hinglish" ? { prompt: HINGLISH_PROMPT_HINT } : {}),
       });
 
       const segments = (response as unknown as { segments?: TranscriptSegment[] }).segments ?? [];

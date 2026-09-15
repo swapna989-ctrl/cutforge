@@ -1,11 +1,12 @@
 import { createClient } from "@/lib/supabase/client";
-import type { PipelineStatus, Ratio, CaptionStyle } from "@/lib/pipeline";
+import type { PipelineStatus, Ratio, CaptionStyle, CaptionLanguage } from "@/lib/pipeline";
 
 export type Project = {
   id: string;
   name: string;
   ratio: Ratio;
   captionStyle: CaptionStyle;
+  captionLanguage: CaptionLanguage;
   pipelineStatus: PipelineStatus;
   progress: number;
   createdAt: string;
@@ -20,6 +21,7 @@ type ProjectRow = {
   name: string;
   ratio: string;
   caption_style: string;
+  caption_language: string;
   pipeline_status: string;
   progress: number;
   created_at: string;
@@ -35,6 +37,7 @@ function mapRow(row: ProjectRow): Project {
     name: row.name,
     ratio: row.ratio as Ratio,
     captionStyle: row.caption_style as CaptionStyle,
+    captionLanguage: row.caption_language as CaptionLanguage,
     pipelineStatus,
     progress: row.progress,
     createdAt: row.created_at.slice(0, 10),
@@ -66,6 +69,9 @@ export async function createProject(input: {
   ratio: Ratio;
   /** Which caption preset the worker burns in — see worker/src/ffmpeg.ts's CAPTION_PRESETS. */
   captionStyle: CaptionStyle;
+  /** Whether to bias transcription toward Romanized Hindi — see worker/src/transcribe.ts's
+   *  HINGLISH_PROMPT_HINT. Best-effort, opt-in. */
+  captionLanguage: CaptionLanguage;
   pipelineStatus: PipelineStatus;
   progress: number;
   sourceKey?: string;
@@ -89,6 +95,7 @@ export async function createProject(input: {
       name: input.name,
       ratio: input.ratio,
       caption_style: input.captionStyle,
+      caption_language: input.captionLanguage,
       pipeline_status: input.pipelineStatus,
       progress: input.progress,
       source_key: input.sourceKey ?? null,

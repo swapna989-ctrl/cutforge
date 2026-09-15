@@ -1,22 +1,25 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import type { Ratio, CaptionStyle } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionLanguage } from "@/lib/pipeline";
 import { useAuth } from "@/lib/auth";
 
 export type Prefs = {
   defaultRatio: Ratio;
   defaultCaptionStyle: CaptionStyle;
+  defaultCaptionLanguage: CaptionLanguage;
 };
 
 const DEFAULT_PREFS: Prefs = {
   defaultRatio: "9:16",
   defaultCaptionStyle: "classic",
+  defaultCaptionLanguage: "auto",
 };
 
 const STORAGE_PREFIX = "cutforge_prefs:";
 const VALID_RATIOS: Ratio[] = ["9:16", "16:9"];
 const VALID_CAPTION_STYLES: CaptionStyle[] = ["classic", "bold_yellow", "rose"];
+const VALID_CAPTION_LANGUAGES: CaptionLanguage[] = ["auto", "hinglish"];
 
 function sanitize(raw: unknown): Prefs {
   if (!raw || typeof raw !== "object") return DEFAULT_PREFS;
@@ -27,6 +30,10 @@ function sanitize(raw: unknown): Prefs {
       typeof r.defaultCaptionStyle === "string" && VALID_CAPTION_STYLES.includes(r.defaultCaptionStyle as CaptionStyle)
         ? (r.defaultCaptionStyle as CaptionStyle)
         : DEFAULT_PREFS.defaultCaptionStyle,
+    defaultCaptionLanguage:
+      typeof r.defaultCaptionLanguage === "string" && VALID_CAPTION_LANGUAGES.includes(r.defaultCaptionLanguage as CaptionLanguage)
+        ? (r.defaultCaptionLanguage as CaptionLanguage)
+        : DEFAULT_PREFS.defaultCaptionLanguage,
   };
 }
 

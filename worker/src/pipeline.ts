@@ -142,7 +142,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
     await updateJob(job.id, { status_message: "Analyzing transcript for clip-worthy moments…", progress: 50 });
     const planningAudioPath = join(tmpDir, "planning-audio.mp3");
     await extractAudio(trimmedPath, planningAudioPath);
-    const segments = await transcribeSegments(planningAudioPath);
+    const segments = await transcribeSegments(planningAudioPath, job.caption_language);
     const trimmedDuration = await getDuration(trimmedPath);
 
     await updateJob(job.id, { status_message: "Planning clips…", progress: 55 });
@@ -172,7 +172,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
 
         await extractClipRange(trimmedPath, candidate.startTime, candidate.endTime, clipPath);
         await extractAudio(clipPath, clipAudioPath);
-        const captionChunks = await transcribeCaptions(clipAudioPath);
+        const captionChunks = await transcribeCaptions(clipAudioPath, job.caption_language);
         const clipDimensions = await getVideoDimensions(clipPath);
         await finalizeVideo(
           clipPath,

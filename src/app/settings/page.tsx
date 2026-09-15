@@ -8,7 +8,7 @@ import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 import { TIER_LABEL } from "@/lib/pricing";
-import type { Ratio, CaptionStyle } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionLanguage } from "@/lib/pipeline";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
@@ -69,6 +69,7 @@ export default function SettingsPage() {
 
   const [ratio, setRatio] = useState<Ratio>(prefs.defaultRatio);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(prefs.defaultCaptionStyle);
+  const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>(prefs.defaultCaptionLanguage);
   const [exportDefaultsState, setExportDefaultsState] = useState<"idle" | "saving" | "saved">("idle");
 
   useEffect(() => {
@@ -87,6 +88,7 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRatio(prefs.defaultRatio);
     setCaptionStyle(prefs.defaultCaptionStyle);
+    setCaptionLanguage(prefs.defaultCaptionLanguage);
   }, [prefs]);
 
   if (!ready || !user) return null;
@@ -117,7 +119,7 @@ export default function SettingsPage() {
     e.preventDefault();
     setExportDefaultsState("saving");
     window.setTimeout(() => {
-      updatePrefs({ defaultRatio: ratio, defaultCaptionStyle: captionStyle });
+      updatePrefs({ defaultRatio: ratio, defaultCaptionStyle: captionStyle, defaultCaptionLanguage: captionLanguage });
       setExportDefaultsState("saved");
       window.setTimeout(() => setExportDefaultsState("idle"), 1800);
     }, 300);
@@ -208,6 +210,34 @@ export default function SettingsPage() {
               </div>
               <p className="text-[11px] text-[#B3ACA6] mt-2">
                 Bold Yellow and Rose highlight each word as it&apos;s spoken, timed to your video&apos;s real audio.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#7B7579] mb-2">Caption language</label>
+              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                <button
+                  type="button"
+                  onClick={() => setCaptionLanguage("auto")}
+                  className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                    captionLanguage === "auto" ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                  }`}
+                >
+                  Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCaptionLanguage("hinglish")}
+                  className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                    captionLanguage === "hinglish" ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                  }`}
+                >
+                  Hinglish (beta)
+                </button>
+              </div>
+              <p className="text-[11px] text-[#B3ACA6] mt-2">
+                Biases Hindi speech toward Romanized captions (&quot;yeh kya ho raha hai&quot;) instead of Devanagari script. Best-effort —
+                quality can vary, especially on longer clips.
               </p>
             </div>
 
