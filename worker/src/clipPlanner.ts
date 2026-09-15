@@ -21,7 +21,12 @@ export type ClipCandidate = {
   viralScore: number;
 };
 
-const MIN_CLIP_SECONDS = 8;
+// A clip under ~30s reads as an abrupt fragment rather than a real standalone short, regardless
+// of how short the source video is — a 5-minute source doesn't get a pass to produce choppier
+// clips than a 30-minute one. If a video genuinely doesn't have enough for even one clip this
+// long, planClips returns fewer candidates (down to zero, which fails the job) rather than ever
+// shortening this floor.
+const MIN_CLIP_SECONDS = 30;
 const MAX_CLIP_SECONDS = 90;
 
 function formatTimestamp(seconds: number): string {
@@ -37,7 +42,9 @@ function buildTranscriptText(segments: TranscriptSegment[]): string {
 function buildPrompt(segments: TranscriptSegment[], videoDurationSeconds: number): string {
   return `You are an expert short-form video editor. Below is a timestamped transcript of a ${Math.round(
     videoDurationSeconds
-  )}-second video. Find the 3 to 5 strongest standalone moments to turn into short vertical clips (roughly ${MIN_CLIP_SECONDS}-${MAX_CLIP_SECONDS} seconds each) for TikTok, Instagram Reels, and YouTube Shorts.
+  )}-second video. Find up to 5 of the strongest standalone moments to turn into short vertical clips (each ${MIN_CLIP_SECONDS}-${MAX_CLIP_SECONDS} seconds long) for TikTok, Instagram Reels, and YouTube Shorts.
+
+Every clip must be at least ${MIN_CLIP_SECONDS} seconds long — never shorter, even if that means finding fewer moments overall. Match the count to what the video actually supports, not a fixed target: a short or low-event video may only have 1-2 real standalone moments that hold up at this length, and returning fewer clips is the correct outcome in that case. Never pad the count with a weak, repetitive, or overlapping clip just to reach a higher number.
 
 Pick moments that are surprising, funny, emotionally resonant, controversial, or contain a clear self-contained story or insight. Each clip must start and end at a natural sentence boundary — never mid-sentence or mid-thought. startTime and endTime must be real seconds that fall within the transcript's own time range below.
 
@@ -70,8 +77,11 @@ function isValidCandidate(c: unknown, videoDurationSeconds: number): c is ClipCa
 }
 
 /**
- * Turns a timestamped transcript into 3-5 candidate short-clip moments via an LLM — real
- * timestamps, a hook line, and a caption per candidate. This only plans WHAT to clip; it
+ * Turns a timestamped transcript into up to 5 candidate short-clip moments via an LLM — real
+ * timestamps, a hook line, and a caption per candidate. The count adapts to what the video
+ * actually supports (see buildPrompt) rather than targeting a fixed number, since every
+ * candidate must still be at least MIN_CLIP_SECONDS long regardless of the source's own length.
+ * This only plans WHAT to clip; it
  * doesn't render anything (mirrors the existing transcribeCaptions/finalizeVideo split: get real
  * data, then act on it as a separate step).
  */
