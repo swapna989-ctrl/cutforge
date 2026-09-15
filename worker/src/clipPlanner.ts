@@ -25,10 +25,9 @@ export type ClipCandidate = {
 // of how short the source video is — a 5-minute source doesn't get a pass to produce choppier
 // clips than a 30-minute one. If a video genuinely doesn't have enough for even one clip this
 // long, planClips returns fewer candidates (down to zero, which fails the job) rather than ever
-// shortening this floor. Capped at 60 (not the old 90) — shorter clips are the better fit for
-// how TikTok/Reels/Shorts actually get watched and finished.
+// shortening this floor.
 const MIN_CLIP_SECONDS = 30;
-const MAX_CLIP_SECONDS = 60;
+const MAX_CLIP_SECONDS = 90;
 
 // Not a target — there is no fixed clip count any more (see buildPrompt). This is only a sanity
 // ceiling so a pathological response, or a genuinely very eventful long source, can't blow the
