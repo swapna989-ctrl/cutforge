@@ -5,7 +5,18 @@ import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
 import { useRequireAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
-import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, CREDIT_SECONDS, creditsToMinutes, type BillingCycle, type PlanTier } from "@/lib/pricing";
+import {
+  TIER_CONFIG,
+  TIER_ORDER,
+  TIER_LABEL,
+  TIER_BLURB,
+  TIER_FEATURES,
+  CREDIT_SECONDS,
+  creditsToMinutes,
+  formatMinutes,
+  type BillingCycle,
+  type PlanTier,
+} from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
@@ -14,27 +25,6 @@ const CREDIT_PACKS = [
   { credits: 30, price: 349 },
   { credits: 100, price: 899, badge: "Best value per credit" },
 ];
-
-const TIER_BLURB: Record<Exclude<PlanTier, "none">, string> = {
-  starter: "For getting your first clips out the door.",
-  creator: "For creators publishing shorts every week.",
-  agency: "For teams clipping at volume across clients.",
-};
-
-// Real features only — no priority processing, per-clip editing, automations, API/MCP access,
-// team seats, or social scheduling, since none of those exist in CutForge yet.
-const TIER_FEATURES: Record<Exclude<PlanTier, "none">, string[]> = {
-  starter: ["AI clip planning + viral score", "Kinetic auto-captions", "Vertical & horizontal crop", "No watermark"],
-  creator: ["Everything in Starter", "3x Starter's monthly minutes", "Rollover up to 2x unused credits"],
-  agency: ["Everything in Creator", "~2.7x Creator's monthly minutes", "Rollover up to 2x unused credits"],
-};
-
-/** 150 -> "2.5 hrs", 45 -> "45 min" — whichever reads more naturally at that size. */
-function formatMinutes(minutes: number): string {
-  if (minutes < 60) return `${minutes} min`;
-  const hours = minutes / 60;
-  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hrs`;
-}
 
 export default function PricingPage() {
   const { ready, user } = useRequireAuth();

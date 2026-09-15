@@ -24,9 +24,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CutForge — Autonomous Editorial Video Intelligence",
+  title: "CutForge — AI clips from your long-form video",
   description:
-    "CutForge synthesizes raw footage into finished cinematic edits. Direct the autonomous engine in 3 simple phases.",
+    "Drop in a video or paste a link. CutForge finds the strongest moments, plans multiple clips with a viral score, and burns in captions — ready to post.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
