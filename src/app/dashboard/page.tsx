@@ -146,7 +146,7 @@ export default function DashboardHomePage() {
       <section className="bg-[#FAF8F7] border border-[#ECE5E6] rounded-2xl p-4 flex items-center gap-3">
         <span className="material-symbols-outlined text-[#9a4153]">tips_and_updates</span>
         <p className="text-sm text-[#544244]">
-          Paste a podcast or stream link to generate up to 5 curated shorts from one video, automatically.
+          Paste a podcast or stream link to generate multiple curated shorts from one video, automatically.
         </p>
       </section>
     </DashboardShell>

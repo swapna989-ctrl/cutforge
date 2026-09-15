@@ -16,7 +16,7 @@ const STEPS = [
   },
   {
     title: "AI finds the moments",
-    body: "CutForge transcribes your footage and plans 3–5 clips, each with its own hook, caption, and AI-estimated viral score.",
+    body: "CutForge transcribes your footage and plans as many clips as it genuinely supports, each with its own hook, caption, and AI-estimated viral score.",
     icon: "auto_awesome",
   },
   {
@@ -46,7 +46,7 @@ const FAQS = [
   },
   {
     q: "How do credits work?",
-    a: `1 credit covers up to ${CREDIT_SECONDS / 60} minutes of source video. A submission is charged for its real length, not a flat rate per video, and unlocks up to 5 AI-planned shorts from it.`,
+    a: `1 credit covers up to ${CREDIT_SECONDS / 60} minutes of source video. A submission is charged for its real length, not a flat rate per video, and unlocks as many AI-planned shorts as the footage supports.`,
   },
   {
     q: "Do unused plan credits roll over?",

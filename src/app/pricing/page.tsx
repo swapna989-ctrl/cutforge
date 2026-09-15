@@ -104,7 +104,7 @@ export default function PricingPage() {
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Subscriptions</h2>
         <p className="text-xs text-[#7B7579] mb-5 text-center max-w-md mx-auto">
           A monthly allowance of source-video minutes to clip, watermark-free — submitting a video uses minutes in proportion to its
-          real length and unlocks up to 5 AI-planned shorts from it.
+          real length and unlocks as many AI-planned shorts as your footage supports.
         </p>
 
         <div className="flex justify-center mb-8">
@@ -201,8 +201,8 @@ export default function PricingPage() {
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Credit packs</h2>
         <p className="text-xs text-[#7B7579] mb-6 text-center max-w-md mx-auto">
           One-time purchase, no auto-renewal — a way to keep clipping past your plan&apos;s monthly allowance, or without a subscription at
-          all. Submitting a video uses credits in proportion to its real length (1 credit ≈ {CREDIT_SECONDS / 60} min) and unlocks up to
-          5 AI-planned shorts from it, watermark-free.
+          all. Submitting a video uses credits in proportion to its real length (1 credit ≈ {CREDIT_SECONDS / 60} min) and unlocks as many
+          AI-planned shorts as your footage supports, watermark-free.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-4xl mx-auto">
           {CREDIT_PACKS.map((pack) => {
