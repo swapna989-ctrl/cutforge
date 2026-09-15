@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { env } from "./env.js";
+import type { CaptionStyle } from "./ffmpeg.js";
 
 // The service role key bypasses RLS entirely — this process is trusted backend code, not a
 // user's browser session, so it can see and update every user's project row. Never let this
@@ -24,6 +25,7 @@ export type ProjectRow = {
   status_message: string | null;
   error_message: string | null;
   watermark: boolean;
+  caption_style: CaptionStyle;
 };
 
 export async function claimNextJob(): Promise<ProjectRow | null> {

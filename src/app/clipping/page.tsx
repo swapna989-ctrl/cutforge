@@ -158,6 +158,7 @@ export default function ClippingPage() {
       const created = await createProject({
         name: files[0].name,
         ratio: prefsReady ? prefs.defaultRatio : "9:16",
+        captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
         pipelineStatus: "ingesting",
         progress: 0,
         sourceKey: firstKey,
@@ -217,6 +218,7 @@ export default function ClippingPage() {
       const created = await createProject({
         name: trimmed,
         ratio: prefsReady ? prefs.defaultRatio : "9:16",
+        captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
         pipelineStatus: "queued",
         progress: 0,
         sourceUrl: trimmed,

@@ -17,7 +17,7 @@ import {
   multiClipTargetDimensions,
   concatClips,
 } from "./ffmpeg.js";
-import { transcribeToSrt, transcribeSegments } from "./transcribe.js";
+import { transcribeCaptions, transcribeSegments } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
 import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, type ProjectRow } from "./supabase.js";
 
@@ -167,14 +167,23 @@ export async function processJob(job: ProjectRow): Promise<void> {
 
         const clipPath = join(tmpDir, `short-${i}.mp4`);
         const clipAudioPath = join(tmpDir, `short-${i}-audio.mp3`);
-        const clipSrtPath = join(tmpDir, `short-${i}.srt`);
+        const clipAssPath = join(tmpDir, `short-${i}.ass`);
         const clipFinalPath = join(tmpDir, `short-${i}-final.mp4`);
 
         await extractClipRange(trimmedPath, candidate.startTime, candidate.endTime, clipPath);
         await extractAudio(clipPath, clipAudioPath);
-        await transcribeToSrt(clipAudioPath, clipSrtPath);
+        const captionChunks = await transcribeCaptions(clipAudioPath);
         const clipDimensions = await getVideoDimensions(clipPath);
-        await finalizeVideo(clipPath, clipSrtPath, job.watermark, clipDimensions.width, clipDimensions.height, clipFinalPath);
+        await finalizeVideo(
+          clipPath,
+          captionChunks,
+          job.caption_style,
+          job.watermark,
+          clipDimensions.width,
+          clipDimensions.height,
+          clipFinalPath,
+          clipAssPath
+        );
 
         const shortOutputKey = `${job.user_id}/shorts/${randomUUID()}.mp4`;
         await uploadFromFile(clipFinalPath, shortOutputKey, "video/mp4");

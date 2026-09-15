@@ -1,13 +1,21 @@
 import OpenAI from "openai";
 import { createReadStream } from "node:fs";
-import { writeFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { env } from "./env.js";
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY, maxRetries: 4, timeout: 120000 });
 
 type Word = { word: string; start: number; end: number };
-type Chunk = { start: number; end: number; text: string };
 export type TranscriptSegment = { start: number; end: number; text: string };
+
+export type CaptionWord = { text: string; start: number; end: number };
+/**
+ * One on-screen caption burst — up to 2 lines, each word keeping its own real Whisper timestamp
+ * (see buildChunk) so ffmpeg.ts can highlight the exact word being spoken as it plays, not just
+ * show/hide the whole burst at once. `lineBreakAfterIndex` is the index of the last word on line
+ * 1 (into `words`), or null for a single-line chunk.
+ */
+export type CaptionChunk = { start: number; end: number; words: CaptionWord[]; lineBreakAfterIndex: number | null };
 
 /**
  * The OpenAI SDK collapses every network-layer failure into a bare "Connection error.", which
@@ -34,15 +42,6 @@ export function describeError(err: unknown): string {
   return parts.join(" ");
 }
 
-function formatSrtTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const ms = Math.round((seconds - Math.floor(seconds)) * 1000);
-  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
-  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`;
-}
-
 // Groups consecutive words into short bursts that appear one at a time, synced to their own
 // real word timestamps, instead of one caption sitting on screen for an entire sentence.
 // Whichever cap is hit first ends the chunk — word count alone would let a run of short words
@@ -51,23 +50,26 @@ function formatSrtTime(seconds: number): string {
 const MAX_WORDS_PER_CHUNK = 6;
 const MAX_CHARS_PER_CHUNK = 42;
 
-// Wraps a chunk's words onto at most 2 lines using a real newline in the SRT text, rather than
+// Wraps a chunk's words onto at most 2 lines by recording where the break falls, rather than
 // leaving line-wrapping to ffmpeg/libass — that's what actually guarantees "max 2 lines"
-// regardless of the output video's width or the caption font's metrics.
-function buildChunk(words: Word[]): Chunk {
+// regardless of the output video's width or the caption font's metrics. Each word keeps its own
+// start/end (not flattened into a single text string) so the caption burn-in can highlight
+// exactly the word being spoken, at exactly the moment it's spoken.
+function buildChunk(words: Word[]): CaptionChunk {
   const start = words[0].start;
   const end = words[words.length - 1].end;
-  const fullText = words.map((w) => w.word.trim()).join(" ");
+  const captionWords: CaptionWord[] = words.map((w) => ({ text: w.word.trim(), start: w.start, end: w.end }));
+  const fullText = captionWords.map((w) => w.text).join(" ");
 
   if (fullText.length <= 24 || words.length < 2) {
-    return { start, end, text: fullText };
+    return { start, end, words: captionWords, lineBreakAfterIndex: null };
   }
 
   const half = fullText.length / 2;
   let splitIndex = Math.ceil(words.length / 2);
   let accumulated = 0;
   for (let i = 0; i < words.length; i++) {
-    accumulated += words[i].word.trim().length + 1;
+    accumulated += captionWords[i].text.length + 1;
     if (accumulated >= half) {
       splitIndex = i + 1;
       break;
@@ -75,19 +77,12 @@ function buildChunk(words: Word[]): Chunk {
   }
   splitIndex = Math.min(Math.max(splitIndex, 1), words.length - 1);
 
-  const line1 = words
-    .slice(0, splitIndex)
-    .map((w) => w.word.trim())
-    .join(" ");
-  const line2 = words
-    .slice(splitIndex)
-    .map((w) => w.word.trim())
-    .join(" ");
-  return { start, end, text: `${line1}\n${line2}` };
+  // Index of the last word on line 1 — splitIndex words (0..splitIndex-1) sit on line 1.
+  return { start, end, words: captionWords, lineBreakAfterIndex: splitIndex - 1 };
 }
 
-function chunkWords(words: Word[]): Chunk[] {
-  const chunks: Chunk[] = [];
+function chunkWords(words: Word[]): CaptionChunk[] {
+  const chunks: CaptionChunk[] = [];
   let current: Word[] = [];
   let currentChars = 0;
 
@@ -107,16 +102,13 @@ function chunkWords(words: Word[]): Chunk[] {
   return chunks;
 }
 
-function chunksToSrt(chunks: Chunk[]): string {
-  return chunks.map((c, i) => `${i + 1}\n${formatSrtTime(c.start)} --> ${formatSrtTime(c.end)}\n${c.text}\n`).join("\n");
-}
-
 /**
- * Transcribes the given audio file and writes an .srt caption file next to it.
+ * Transcribes the given audio file into short, word-timestamped caption bursts (see CaptionChunk).
  * whisper-1 is the only current model that supports timestamp_granularities, which is what
- * makes accurately-synced captions possible — the newer/cheaper transcribe models don't.
+ * makes accurately-synced captions — including per-word highlight timing — possible; the
+ * newer/cheaper transcribe models don't.
  */
-export async function transcribeToSrt(audioPath: string, srtOutputPath: string): Promise<void> {
+export async function transcribeCaptions(audioPath: string): Promise<CaptionChunk[]> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
 
@@ -151,9 +143,7 @@ export async function transcribeToSrt(audioPath: string, srtOutputPath: string):
         throw new Error("Whisper returned 0 words for non-trivial audio");
       }
 
-      const chunks = chunkWords(words);
-      await writeFile(srtOutputPath, chunksToSrt(chunks), "utf-8");
-      return;
+      return chunkWords(words);
     } catch (err) {
       lastError = err;
       console.error(`Transcription attempt ${attempt}/${MAX_ATTEMPTS} failed:`, describeError(err));
@@ -167,8 +157,8 @@ export async function transcribeToSrt(audioPath: string, srtOutputPath: string):
 /**
  * Transcribes the given audio file into sentence-ish segments with real timestamps — for the
  * AI Clip Planner (see clipPlanner.ts), which needs readable, timestamped speech content to
- * reason about, not the short word-level bursts transcribeToSrt builds for on-screen captions.
- * A separate Whisper call from transcribeToSrt's (word-level) one — kept independent for now so
+ * reason about, not the short word-level bursts transcribeCaptions builds for on-screen captions.
+ * A separate Whisper call from transcribeCaptions' (word-level) one — kept independent for now so
  * neither function's behavior depends on the other; worth merging into one "word"+"segment"
  * call once both are actually used together in the same job.
  */

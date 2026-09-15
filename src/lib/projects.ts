@@ -1,10 +1,11 @@
 import { createClient } from "@/lib/supabase/client";
-import type { PipelineStatus, Ratio } from "@/lib/pipeline";
+import type { PipelineStatus, Ratio, CaptionStyle } from "@/lib/pipeline";
 
 export type Project = {
   id: string;
   name: string;
   ratio: Ratio;
+  captionStyle: CaptionStyle;
   pipelineStatus: PipelineStatus;
   progress: number;
   createdAt: string;
@@ -18,6 +19,7 @@ type ProjectRow = {
   id: string;
   name: string;
   ratio: string;
+  caption_style: string;
   pipeline_status: string;
   progress: number;
   created_at: string;
@@ -32,6 +34,7 @@ function mapRow(row: ProjectRow): Project {
     id: row.id,
     name: row.name,
     ratio: row.ratio as Ratio,
+    captionStyle: row.caption_style as CaptionStyle,
     pipelineStatus,
     progress: row.progress,
     createdAt: row.created_at.slice(0, 10),
@@ -61,6 +64,8 @@ export async function getProject(id: string | null): Promise<Project | null> {
 export async function createProject(input: {
   name: string;
   ratio: Ratio;
+  /** Which caption preset the worker burns in — see worker/src/ffmpeg.ts's CAPTION_PRESETS. */
+  captionStyle: CaptionStyle;
   pipelineStatus: PipelineStatus;
   progress: number;
   sourceKey?: string;
@@ -83,6 +88,7 @@ export async function createProject(input: {
       user_id: user.id,
       name: input.name,
       ratio: input.ratio,
+      caption_style: input.captionStyle,
       pipeline_status: input.pipelineStatus,
       progress: input.progress,
       source_key: input.sourceKey ?? null,

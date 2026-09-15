@@ -227,6 +227,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       const created = await createProject({
         name: files[0].name,
         ratio,
+        captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
         pipelineStatus: "ingesting",
         progress: 0,
         sourceKey: firstKey,

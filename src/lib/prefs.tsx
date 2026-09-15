@@ -1,25 +1,32 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import type { Ratio } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle } from "@/lib/pipeline";
 import { useAuth } from "@/lib/auth";
 
 export type Prefs = {
   defaultRatio: Ratio;
+  defaultCaptionStyle: CaptionStyle;
 };
 
 const DEFAULT_PREFS: Prefs = {
   defaultRatio: "9:16",
+  defaultCaptionStyle: "classic",
 };
 
 const STORAGE_PREFIX = "cutforge_prefs:";
 const VALID_RATIOS: Ratio[] = ["9:16", "16:9"];
+const VALID_CAPTION_STYLES: CaptionStyle[] = ["classic", "bold_yellow", "rose"];
 
 function sanitize(raw: unknown): Prefs {
   if (!raw || typeof raw !== "object") return DEFAULT_PREFS;
   const r = raw as Partial<Record<keyof Prefs, unknown>>;
   return {
     defaultRatio: typeof r.defaultRatio === "string" && VALID_RATIOS.includes(r.defaultRatio as Ratio) ? (r.defaultRatio as Ratio) : DEFAULT_PREFS.defaultRatio,
+    defaultCaptionStyle:
+      typeof r.defaultCaptionStyle === "string" && VALID_CAPTION_STYLES.includes(r.defaultCaptionStyle as CaptionStyle)
+        ? (r.defaultCaptionStyle as CaptionStyle)
+        : DEFAULT_PREFS.defaultCaptionStyle,
   };
 }
 

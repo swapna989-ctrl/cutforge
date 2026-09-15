@@ -2,9 +2,10 @@ import ffmpegPath from "ffmpeg-static";
 import ffprobePath from "ffprobe-static";
 import ffmpeg from "fluent-ffmpeg";
 import { spawn } from "node:child_process";
-import { copyFile, readFile, writeFile } from "node:fs/promises";
+import { copyFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { CaptionChunk } from "./transcribe.js";
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 if (ffprobePath?.path) ffmpeg.setFfprobePath(ffprobePath.path);
@@ -339,68 +340,161 @@ function escapeFfmpegPath(p: string): string {
   return `'${p.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
 }
 
-type SrtCue = { start: string; end: string; text: string };
+export type CaptionStyle = "classic" | "bold_yellow" | "rose";
 
-/** "00:00:01,960" (SRT) -> "0:00:01.96" (ASS: H:MM:SS.CC, centiseconds). */
-function srtTimeToAssTime(t: string): string {
-  const m = t.match(/(\d+):(\d{2}):(\d{2}),(\d{3})/);
-  if (!m) return "0:00:00.00";
-  const hours = parseInt(m[1], 10);
-  const centiseconds = Math.round(parseInt(m[4], 10) / 10)
-    .toString()
-    .padStart(2, "0");
-  return `${hours}:${m[2]}:${m[3]}.${centiseconds}`;
+type CaptionPresetSpec = {
+  fontSize: number;
+  bold: boolean;
+  /** ASS color format is &HAABBGGRR — reversed byte order from a normal #RRGGBB hex string. */
+  primaryColor: string;
+  outlineColor: string;
+  outlineWidth: number;
+  /**
+   * Color the one word currently being spoken switches to — null means no highlight at all,
+   * rendering exactly like the original single-color captions this replaced (kept as the
+   * `classic` preset for anyone who prefers the plain look).
+   */
+  highlightColor: string | null;
+};
+
+// Named bundles, not raw sliders — chosen after looking at how vugolaai.com's own caption
+// editor actually splits this up (Presets tab vs. a separate Font/Effects tab): a preset picker
+// covers the common case, without us needing to expose every individual knob yet.
+const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
+  classic: {
+    fontSize: 20,
+    bold: false,
+    primaryColor: "&H00FFFFFF", // white
+    outlineColor: "&H00000000", // black
+    outlineWidth: 5,
+    highlightColor: null,
+  },
+  bold_yellow: {
+    fontSize: 22,
+    bold: true,
+    primaryColor: "&H00FFFFFF", // white
+    outlineColor: "&H00000000", // black
+    outlineWidth: 6,
+    highlightColor: "&H0000FFFF", // yellow — the current word "pops" mid-sentence
+  },
+  rose: {
+    fontSize: 22,
+    bold: true,
+    primaryColor: "&H00FFFFFF", // white
+    outlineColor: "&H00000000", // black
+    outlineWidth: 6,
+    highlightColor: "&H009583ED", // CutForge's own rose accent (#ed8395), converted to ASS BGR
+  },
+};
+
+/** ASS override tags use `{` `}` `\` as syntax — a real transcript essentially never contains
+ *  these, but stripping them defensively costs nothing and guarantees a word can't corrupt the
+ *  tag stream around it. */
+function escapeAssText(text: string): string {
+  return text.replace(/[{}\\]/g, "");
 }
 
-function parseSrt(content: string): SrtCue[] {
-  return content
-    .split(/\r?\n\r?\n/)
-    .map((b) => b.trim())
-    .filter(Boolean)
-    .flatMap((block) => {
-      const lines = block.split(/\r?\n/);
-      const match = lines[1]?.match(/([\d:,]+)\s*-->\s*([\d:,]+)/);
-      if (!match) return [];
-      // A real newline in the SRT text (from transcribe.ts's 2-line chunking) becomes ASS's
-      // own line-break escape here, not a literal newline in the .ass file.
-      const text = lines.slice(2).join("\\N");
-      return [{ start: srtTimeToAssTime(match[1]), end: srtTimeToAssTime(match[2]), text }];
+/** "0:00:01.96" — ASS's own H:MM:SS.CC (centiseconds) time format, built directly from a real
+ *  seconds value rather than round-tripping through SRT's H:MM:SS,mmm string format. */
+function toAssTime(seconds: number): string {
+  const clamped = Math.max(0, seconds);
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const secs = Math.floor(clamped % 60);
+  const centiseconds = Math.round((clamped - Math.floor(clamped)) * 100);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${hours}:${pad(minutes)}:${pad(secs)}.${pad(centiseconds)}`;
+}
+
+/** Joins a chunk's words back into text with a line break at lineBreakAfterIndex — the plain,
+ *  no-highlight rendering, and also the base every highlighted word is built from below. */
+function plainChunkText(chunk: CaptionChunk, wordOverride?: (word: CaptionWordLike, index: number) => string): string {
+  const parts: string[] = [];
+  chunk.words.forEach((word, i) => {
+    parts.push(wordOverride ? wordOverride(word, i) : escapeAssText(word.text));
+    if (i === chunk.lineBreakAfterIndex) parts.push("\\N");
+    else if (i < chunk.words.length - 1) parts.push(" ");
+  });
+  return parts.join("");
+}
+
+type CaptionWordLike = CaptionChunk["words"][number];
+
+/** &H00BBGGRR (style-line format, with an alpha byte) -> &HBBGGRR& (inline \c override format,
+ *  without one) — ASS uses two different color syntaxes and neither is a prefix of the other. */
+function inlineColor(styleColor: string): string {
+  return `${styleColor.replace(/^&H00/, "&H")}&`;
+}
+
+/**
+ * One chunk of on-screen text can need several *separate* Dialogue events, not one: ASS's own
+ * per-word karaoke tag (\k) turned out to only support a cumulative two-color sweep (everything
+ * already "sung" one color, everything still upcoming the other — confirmed against real
+ * libass output), not an isolated single-word pop, which is the actual effect we want. Emitting
+ * one event per word instead — spanning just that word's own [start, end], with the full line's
+ * text repeated but only that one word wrapped in an inline color override — gets the real
+ * effect: because every event shows pixel-identical text at the same position except for the one
+ * recolored word, and no two of a chunk's events overlap in time, it reads as that single word
+ * changing color while the rest of the line stays put. Gaps between words are folded into the
+ * *next* word's event (its start is the previous word's end) so there's no dead air with nothing
+ * highlighted. Returns a single event for the whole chunk when there's no highlight color at all.
+ */
+function buildChunkEvents(chunk: CaptionChunk, highlightColor: string | null, baseColor: string): { start: number; end: number; text: string }[] {
+  if (!highlightColor) {
+    return [{ start: chunk.start, end: chunk.end, text: plainChunkText(chunk) }];
+  }
+
+  const highlightTag = inlineColor(highlightColor);
+  const baseTag = inlineColor(baseColor);
+  let cumulative = chunk.start;
+
+  return chunk.words.map((word, i) => {
+    const text = plainChunkText(chunk, (w, j) => {
+      const escaped = escapeAssText(w.text);
+      return j === i ? `{\\c${highlightTag}}${escaped}{\\c${baseTag}}` : escaped;
     });
+    const event = { start: cumulative, end: word.end, text };
+    cumulative = word.end;
+    return event;
+  });
 }
 
 /**
  * Builds a complete .ass document with its own PlayResX/PlayResY set to the REAL output
- * dimensions. This is necessary, not cosmetic: feeding a plain .srt straight into the subtitles
- * filter (via force_style) renders MarginV against libass's own default script resolution rather
- * than the actual video frame — confirmed against a real 1280-tall render where a MarginV
- * computed from the true height still landed captions near mid-frame instead of the bottom
- * third. Declaring PlayResX/Y ourselves, matching the real frame, removes that ambiguity: every
- * pixel value in the style below maps 1:1 onto the actual output.
+ * dimensions. This is necessary, not cosmetic: rendering MarginV without declaring these lands it
+ * against libass's own default script resolution rather than the actual video frame — confirmed
+ * against a real 1280-tall render where a MarginV computed from the true height still landed
+ * captions near mid-frame instead of the bottom third. Declaring PlayResX/Y ourselves, matching
+ * the real frame, removes that ambiguity: every pixel value in the style below maps 1:1 onto the
+ * actual output.
  */
-function buildAssDocument(cues: SrtCue[], width: number, height: number, marginV: number): string {
+function buildAssDocument(chunks: CaptionChunk[], style: CaptionStyle, width: number, height: number, marginV: number): string {
+  const preset = CAPTION_PRESETS[style];
+
   // BorderStyle=1 is libass's "outline" style (as opposed to 3, "opaque box") — Outline is then
   // the stroke width in pixels and OutlineColour the stroke's own color, fully opaque so it reads
   // as a clean stroke rather than a tinted box. Alignment=2 is bottom-center; MarginV keeps the
   // caption block inside the bottom third without pinning it to the very edge; MarginL/R keep it
-  // off the side edges.
-  const style = [
+  // off the side edges. SecondaryColour is unused — the per-word highlight (see buildChunkEvents)
+  // is done with inline \c overrides on individual events instead, not this style's own colors.
+  const styleLine = [
     "Default",
     FONT_NAME,
-    "20",
-    "&H00FFFFFF", // PrimaryColour: opaque white
-    "&H000000FF", // SecondaryColour: unused (karaoke only)
-    "&H00000000", // OutlineColour: opaque black
+    String(preset.fontSize),
+    preset.primaryColor,
+    preset.primaryColor,
+    preset.outlineColor,
     "&H00000000", // BackColour: unused (only applies to BorderStyle 3's box fill)
+    preset.bold ? "-1" : "0",
     "0",
     "0",
-    "0",
-    "0", // Bold, Italic, Underline, StrikeOut
+    "0", // Italic, Underline, StrikeOut
     "100",
     "100",
     "0",
     "0", // ScaleX, ScaleY, Spacing, Angle
     "1", // BorderStyle: outline, not opaque box
-    "5", // Outline width in px
+    String(preset.outlineWidth),
     "0", // Shadow
     "2", // Alignment: bottom-center
     "48",
@@ -409,7 +503,10 @@ function buildAssDocument(cues: SrtCue[], width: number, height: number, marginV
     "1", // Encoding
   ].join(",");
 
-  const events = cues.map((c) => `Dialogue: 0,${c.start},${c.end},Default,,0,0,0,,${c.text}`).join("\n");
+  const events = chunks
+    .flatMap((c) => buildChunkEvents(c, preset.highlightColor, preset.primaryColor))
+    .map((e) => `Dialogue: 0,${toAssTime(e.start)},${toAssTime(e.end)},Default,,0,0,0,,${e.text}`)
+    .join("\n");
 
   return `[Script Info]
 ScriptType: v4.00+
@@ -419,7 +516,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ${style}
+Style: ${styleLine}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -433,21 +530,22 @@ ${events}
  * upload time, from the user's billing status then (see projects.watermark).
  *
  * `outputWidth`/`outputHeight` are the real dimensions of `inputPath` (see getVideoDimensions) —
- * see buildAssDocument for why they matter.
+ * see buildAssDocument for why they matter. `assPath` is just a scratch file this writes to and
+ * points ffmpeg's subtitles filter at — callers own tmpDir cleanup, same as every other
+ * intermediate file in the pipeline.
  */
 export async function finalizeVideo(
   inputPath: string,
-  srtPath: string,
+  chunks: CaptionChunk[],
+  captionStyle: CaptionStyle,
   watermark: boolean,
   outputWidth: number,
   outputHeight: number,
-  outputPath: string
+  outputPath: string,
+  assPath: string
 ): Promise<void> {
-  const srtContent = await readFile(srtPath, "utf-8");
-  const cues = parseSrt(srtContent);
   const marginV = Math.round(outputHeight * 0.1);
-  const assPath = srtPath.replace(/\.srt$/i, ".ass");
-  await writeFile(assPath, buildAssDocument(cues, outputWidth, outputHeight, marginV), "utf-8");
+  await writeFile(assPath, buildAssDocument(chunks, captionStyle, outputWidth, outputHeight, marginV), "utf-8");
 
   const escapedAssPath = escapeFfmpegPath(assPath);
   const subtitlesFilter = `subtitles=${escapedAssPath}:fontsdir=${escapedFontsDir}`;

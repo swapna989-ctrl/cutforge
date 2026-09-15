@@ -8,9 +8,30 @@ import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 import { TIER_LABEL } from "@/lib/pricing";
-import type { Ratio } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle } from "@/lib/pipeline";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
+
+// Mirrors worker/src/ffmpeg.ts's CAPTION_PRESETS closely enough for a preview swatch — the
+// worker's own values are what actually render, this is just so a user can see roughly what
+// they're picking before it's burned into a real video.
+const CAPTION_STYLE_OPTIONS: { value: CaptionStyle; label: string; highlight: string | null }[] = [
+  { value: "classic", label: "Classic", highlight: null },
+  { value: "bold_yellow", label: "Bold Yellow", highlight: "#FFFF00" },
+  { value: "rose", label: "Rose", highlight: "#ed8395" },
+];
+
+function CaptionPreview({ highlight, bold }: { highlight: string | null; bold: boolean }) {
+  const strokeStyle = { WebkitTextStroke: "2px black", paintOrder: "stroke fill" } as const;
+  return (
+    <div className="rounded-lg bg-[#1a1a1a] px-2 py-3 flex items-center justify-center leading-tight">
+      <span className={`text-[11px] text-white uppercase ${bold ? "font-extrabold" : "font-medium"}`} style={strokeStyle}>
+        SAMPLE{" "}
+        <span style={{ ...strokeStyle, color: highlight ?? "#fff" }}>TEXT</span>
+      </span>
+    </div>
+  );
+}
 
 function SectionCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
@@ -47,7 +68,8 @@ export default function SettingsPage() {
   const [planError, setPlanError] = useState<string | null>(null);
 
   const [ratio, setRatio] = useState<Ratio>(prefs.defaultRatio);
-  const [ratioState, setRatioState] = useState<"idle" | "saving" | "saved">("idle");
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(prefs.defaultCaptionStyle);
+  const [exportDefaultsState, setExportDefaultsState] = useState<"idle" | "saving" | "saved">("idle");
 
   useEffect(() => {
     // Seeds the form once the real Supabase user arrives asynchronously — an external system,
@@ -64,6 +86,7 @@ export default function SettingsPage() {
     // different tab) — same rationale as the effect above.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRatio(prefs.defaultRatio);
+    setCaptionStyle(prefs.defaultCaptionStyle);
   }, [prefs]);
 
   if (!ready || !user) return null;
@@ -90,13 +113,13 @@ export default function SettingsPage() {
     if (error) setPlanError(error);
   }
 
-  function handleRatioSubmit(e: React.FormEvent) {
+  function handleExportDefaultsSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setRatioState("saving");
+    setExportDefaultsState("saving");
     window.setTimeout(() => {
-      updatePrefs({ defaultRatio: ratio });
-      setRatioState("saved");
-      window.setTimeout(() => setRatioState("idle"), 1800);
+      updatePrefs({ defaultRatio: ratio, defaultCaptionStyle: captionStyle });
+      setExportDefaultsState("saved");
+      window.setTimeout(() => setExportDefaultsState("idle"), 1800);
     }, 300);
   }
 
@@ -142,10 +165,10 @@ export default function SettingsPage() {
         </SectionCard>
 
         <SectionCard
-          title="Export default"
-          description="The aspect ratio new projects start with — override any time in the workspace."
+          title="Export defaults"
+          description="Applied to every new submission — override any time in the workspace."
         >
-          <form onSubmit={handleRatioSubmit} className="space-y-5">
+          <form onSubmit={handleExportDefaultsSubmit} className="space-y-5">
             <div>
               <label className="block text-xs font-medium text-[#7B7579] mb-2">Default aspect ratio</label>
               <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
@@ -164,8 +187,32 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            <div>
+              <label className="block text-xs font-medium text-[#7B7579] mb-2">Caption style</label>
+              <div className="grid grid-cols-3 gap-2">
+                {CAPTION_STYLE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setCaptionStyle(opt.value)}
+                    className={`rounded-xl border p-1.5 text-left transition-all duration-150 cursor-pointer ${
+                      captionStyle === opt.value ? "border-[#ed8395] ring-2 ring-[#ed8395]/25" : "border-[#ECE5E6] hover:border-[#D8D0CE]"
+                    }`}
+                  >
+                    <CaptionPreview highlight={opt.highlight} bold={opt.value !== "classic"} />
+                    <span className={`block text-center text-[11px] mt-1.5 ${captionStyle === opt.value ? "text-[#9a4153] font-semibold" : "text-[#7B7579]"}`}>
+                      {opt.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-[#B3ACA6] mt-2">
+                Bold Yellow and Rose highlight each word as it&apos;s spoken, timed to your video&apos;s real audio.
+              </p>
+            </div>
+
             <div className="pt-1">
-              <SaveButton state={ratioState} />
+              <SaveButton state={exportDefaultsState} />
             </div>
           </form>
         </SectionCard>

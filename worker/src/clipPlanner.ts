@@ -72,7 +72,7 @@ function isValidCandidate(c: unknown, videoDurationSeconds: number): c is ClipCa
 /**
  * Turns a timestamped transcript into 3-5 candidate short-clip moments via an LLM — real
  * timestamps, a hook line, and a caption per candidate. This only plans WHAT to clip; it
- * doesn't render anything (mirrors the existing transcribeToSrt/finalizeVideo split: get real
+ * doesn't render anything (mirrors the existing transcribeCaptions/finalizeVideo split: get real
  * data, then act on it as a separate step).
  */
 export async function planClips(segments: TranscriptSegment[], videoDurationSeconds: number): Promise<ClipCandidate[]> {
