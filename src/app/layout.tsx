@@ -24,9 +24,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CutForge — AI clips from your long-form video",
+  title: "Flovura — AI clips from your long-form video",
   description:
-    "Drop in a video or paste a link. CutForge finds the strongest moments, plans multiple clips with a viral score, and burns in captions — ready to post.",
+    "Drop in a video or paste a link. Flovura finds the strongest moments, plans multiple clips with a viral score, and burns in captions — ready to post.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

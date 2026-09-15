@@ -32,7 +32,7 @@ export const TIER_BLURB: Record<Exclude<PlanTier, "none">, string> = {
 };
 
 // Real features only — no priority processing, per-clip editing, automations, API/MCP access,
-// team seats, or social scheduling, since none of those exist in CutForge yet. Shared by the
+// team seats, or social scheduling, since none of those exist in Flovura yet. Shared by the
 // public landing page and the in-app pricing page so the two can never list different things.
 export const TIER_FEATURES: Record<Exclude<PlanTier, "none">, string[]> = {
   starter: ["AI clip planning + viral score", "Kinetic auto-captions", "Vertical & horizontal crop", "No watermark"],

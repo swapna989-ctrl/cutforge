@@ -16,7 +16,7 @@ const DEFAULT_PREFS: Prefs = {
   defaultCaptionLanguage: "auto",
 };
 
-const STORAGE_PREFIX = "cutforge_prefs:";
+const STORAGE_PREFIX = "flovura_prefs:";
 const VALID_RATIOS: Ratio[] = ["9:16", "16:9"];
 const VALID_CAPTION_STYLES: CaptionStyle[] = ["classic", "bold_yellow", "rose"];
 const VALID_CAPTION_LANGUAGES: CaptionLanguage[] = ["auto", "hinglish"];

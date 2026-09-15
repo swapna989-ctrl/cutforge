@@ -26,10 +26,10 @@ export async function GET(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     if (!short?.output_key) return NextResponse.json({ error: "This short isn't ready yet" }, { status: 404 });
 
-    const baseName = (short.hook || `cutforge-short-${short.position + 1}`)
+    const baseName = (short.hook || `flovura-short-${short.position + 1}`)
       .replace(/[/\\?%*:|"<>]/g, "")
       .trim()
-      .slice(0, 60) || `cutforge-short-${short.position + 1}`;
+      .slice(0, 60) || `flovura-short-${short.position + 1}`;
     const filename = `${baseName}.mp4`;
 
     const downloadUrl = await getDownloadUrl(short.output_key, filename);
@@ -44,8 +44,8 @@ export async function GET(request: Request) {
 
   // Base the download's filename on the project name (what the user actually recognizes it by)
   // rather than the R2 key, which is just a UUID.
-  const baseName = (project.name || "cutforge-master").replace(/\.[^./\\]+$/, "");
-  const filename = `${baseName}-cutforge.mp4`;
+  const baseName = (project.name || "flovura-master").replace(/\.[^./\\]+$/, "");
+  const filename = `${baseName}-flovura.mp4`;
 
   const downloadUrl = await getDownloadUrl(project.output_key, filename);
   return NextResponse.json({ downloadUrl });

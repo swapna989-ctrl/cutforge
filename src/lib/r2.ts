@@ -45,7 +45,7 @@ export function getUploadUrl(key: string, contentType: string): Promise<string> 
  * degrade gracefully instead of producing a malformed header.
  */
 function contentDisposition(filename: string): string {
-  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_") || "cutforge-master.mp4";
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_") || "flovura-master.mp4";
   const utf8Encoded = encodeURIComponent(filename);
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
 }

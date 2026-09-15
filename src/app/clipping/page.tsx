@@ -249,7 +249,7 @@ export default function ClippingPage() {
           The <span className="italic text-[#9a4153]">Clipping</span> Agent
         </h1>
         <p className="text-sm text-[#7B7579] leading-relaxed max-w-md">
-          Paste a link or upload your footage — CutForge finds the best moments and turns them into ready-to-post
+          Paste a link or upload your footage — Flovura finds the best moments and turns them into ready-to-post
           shorts.
         </p>
       </section>

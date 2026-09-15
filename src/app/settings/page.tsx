@@ -133,7 +133,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        <SectionCard title="Profile" description="Your name and email, shown across CutForge.">
+        <SectionCard title="Profile" description="Your name and email, shown across Flovura.">
           <form onSubmit={handleProfileSubmit} className="space-y-3">
             <div>
               <label className="block text-xs font-medium text-[#7B7579] mb-1.5">Name</label>
@@ -247,7 +247,7 @@ export default function SettingsPage() {
           </form>
         </SectionCard>
 
-        <SectionCard title="Plan & billing" description="Your current CutForge plan and credit balance.">
+        <SectionCard title="Plan & billing" description="Your current Flovura plan and credit balance.">
           <div className="rounded-xl border border-[#ECE5E6] bg-[#FAF8F7] px-4 py-4 mb-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-semibold text-[#1d1b1e]">

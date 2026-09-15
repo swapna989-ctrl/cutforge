@@ -7,7 +7,7 @@ import { TIER_LABEL } from "@/lib/pricing";
 
 /**
  * Visual redesign only — same real useAuth/useBilling/usePathname wiring as before, just
- * restyled to CutForge's warm-editorial look. The nav drawer itself lives in NavDrawer.tsx,
+ * restyled to Flovura's warm-editorial look. The nav drawer itself lives in NavDrawer.tsx,
  * shared with WorkspaceShell so every screen gets the same real navigation.
  */
 export default function DashboardShell({ children }: { children: React.ReactNode }) {

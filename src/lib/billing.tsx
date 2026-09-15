@@ -70,7 +70,7 @@ type BillingContextValue = {
   planRenewsAt: string | null;
   ready: boolean;
   hasActivePlan: boolean;
-  /** True when the next export won't carry the CutForge watermark. */
+  /** True when the next export won't carry the Flovura watermark. */
   isWatermarkFree: boolean;
   /** True when there's any credit or plan allowance left to export with (watermarked or not). */
   canExport: boolean;

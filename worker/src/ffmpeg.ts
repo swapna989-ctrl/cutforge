@@ -383,7 +383,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
     outlineWidth: 6,
-    highlightColor: "&H009583ED", // CutForge's own rose accent (#ed8395), converted to ASS BGR
+    highlightColor: "&H009583ED", // Flovura's own rose accent (#ed8395), converted to ASS BGR
   },
 };
 

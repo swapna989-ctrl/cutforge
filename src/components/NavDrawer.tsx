@@ -77,7 +77,7 @@ export default function NavDrawer() {
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onClick={closeDrawer} />
           <aside className="fixed top-0 left-0 h-full w-[82%] max-w-[320px] bg-white z-50 shadow-[8px_0_40px_-4px_rgba(33,25,28,0.22)] flex flex-col border-r border-[#ECE5E6]">
             <div className="flex items-center justify-between px-4 h-16 border-b border-[#ECE5E6] shrink-0">
-              <span className={`${playfair.className} text-lg font-semibold text-[#9a4153]`}>CutForge</span>
+              <span className={`${playfair.className} text-lg font-semibold text-[#9a4153]`}>Flovura</span>
               <button
                 onClick={closeDrawer}
                 aria-label="Close navigation menu"
@@ -173,7 +173,7 @@ export function BrandMark({ href = "/dashboard" }: { href?: string }) {
   return (
     <Link href={href} className="flex items-center gap-2">
       <Image src="/brand/logo.png" alt="" width={28} height={28} className="w-7 h-7 rounded-lg object-cover" priority />
-      <span className={`${playfair.className} text-lg font-semibold text-[#9a4153] tracking-tight`}>CutForge</span>
+      <span className={`${playfair.className} text-lg font-semibold text-[#9a4153] tracking-tight`}>Flovura</span>
     </Link>
   );
 }

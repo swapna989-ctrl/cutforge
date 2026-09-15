@@ -477,7 +477,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
       ? billing.hasActivePlan && billing.planCredits >= creditsNeeded
         ? `No watermark · ${billing.planCredits - creditsNeeded} credit${billing.planCredits - creditsNeeded === 1 ? "" : "s"} left this month`
         : `No watermark · ${billing.paidCredits - creditsNeeded} paid credit${billing.paidCredits - creditsNeeded === 1 ? "" : "s"} left`
-      : `Includes CutForge watermark (${billing.freeCredits - creditsNeeded} free export${billing.freeCredits - creditsNeeded === 1 ? "" : "s"} left)`;
+      : `Includes Flovura watermark (${billing.freeCredits - creditsNeeded} free export${billing.freeCredits - creditsNeeded === 1 ? "" : "s"} left)`;
 
     setDownloadState("preparing");
     (async () => {

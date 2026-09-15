@@ -112,7 +112,7 @@ export default function MediaStage({
           <span className="material-symbols-outlined text-[#A8724A] text-3xl">movie</span>
         </div>
         <h2 className="font-display text-xl sm:text-2xl font-semibold text-[#2B2926] mb-1.5">Drop your footage here</h2>
-        <p className="text-sm text-[#8A8375] font-body">or tap to browse — CutForge handles the rest</p>
+        <p className="text-sm text-[#8A8375] font-body">or tap to browse — Flovura handles the rest</p>
       </div>
     );
   }

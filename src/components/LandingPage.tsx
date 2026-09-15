@@ -16,7 +16,7 @@ const STEPS = [
   },
   {
     title: "AI finds the moments",
-    body: "CutForge transcribes your footage and plans as many clips as it genuinely supports, each with its own hook, caption, and AI-estimated viral score.",
+    body: "Flovura transcribes your footage and plans as many clips as it genuinely supports, each with its own hook, caption, and AI-estimated viral score.",
     icon: "auto_awesome",
   },
   {
@@ -31,14 +31,14 @@ const FEATURES = [
   { icon: "insights", title: "Viral score", body: "Every planned clip gets an AI-estimated score, so you know which ones to post first." },
   { icon: "closed_caption", title: "Kinetic captions", body: "Word-synced captions burned directly into the video — no separate captioning step." },
   { icon: "crop", title: "Vertical & horizontal", body: "Export 9:16 for Shorts/Reels/TikTok or 16:9 for YouTube, from the same source." },
-  { icon: "link", title: "Links or uploads", body: "Drop in a file, or paste a YouTube or Twitch link and let CutForge fetch it for you." },
+  { icon: "link", title: "Links or uploads", body: "Drop in a file, or paste a YouTube or Twitch link and let Flovura fetch it for you." },
   { icon: "verified", title: "No watermark", body: "Paid credits and subscriptions render clean — the free tier watermark comes off immediately." },
 ];
 
 const FAQS = [
   {
-    q: "How does CutForge work?",
-    a: "Upload a video or paste a YouTube or Twitch link. CutForge transcribes it, plans several candidate clips with a hook and caption for each, and renders them with captions burned in — ready to download.",
+    q: "How does Flovura work?",
+    a: "Upload a video or paste a YouTube or Twitch link. Flovura transcribes it, plans several candidate clips with a hook and caption for each, and renders them with captions burned in — ready to download.",
   },
   {
     q: "What videos can I use?",
@@ -88,7 +88,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
           <Link href="/" className="flex items-center gap-2">
             <Image src="/brand/logo.png" alt="" width={28} height={28} className="w-7 h-7 rounded-lg object-cover" priority />
-            <span className={`${playfair.className} text-lg font-semibold text-[#9a4153] tracking-tight`}>CutForge</span>
+            <span className={`${playfair.className} text-lg font-semibold text-[#9a4153] tracking-tight`}>Flovura</span>
           </Link>
 
           <nav className="hidden sm:flex items-center gap-6">
@@ -128,7 +128,7 @@ export default function LandingPage() {
               Walk away with <span className="italic text-[#9a4153]">shorts</span>.
             </h1>
             <p className="text-base text-[#7B7579] leading-relaxed max-w-md mb-8">
-              CutForge finds the strongest moments in your footage, plans multiple clips with a hook and viral score for each, and burns
+              Flovura finds the strongest moments in your footage, plans multiple clips with a hook and viral score for each, and burns
               in captions — ready to download and post.
             </p>
             <div className="flex items-center gap-4 flex-wrap">
@@ -199,7 +199,7 @@ export default function LandingPage() {
               Everything you need to clip
             </h2>
             <p className="text-sm text-[#7B7579]">
-              What&apos;s actually in CutForge today — nothing on this page is a &quot;coming soon.&quot;
+              What&apos;s actually in Flovura today — nothing on this page is a &quot;coming soon.&quot;
             </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -314,7 +314,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Image src="/brand/logo.png" alt="" width={22} height={22} className="w-[22px] h-[22px] rounded-md object-cover" />
-            <span className={`${playfair.className} text-sm font-semibold text-[#9a4153]`}>CutForge</span>
+            <span className={`${playfair.className} text-sm font-semibold text-[#9a4153]`}>Flovura</span>
             <span className="text-xs text-[#B3ACA6]">© {new Date().getFullYear()}</span>
           </div>
           <div className="flex items-center gap-6">

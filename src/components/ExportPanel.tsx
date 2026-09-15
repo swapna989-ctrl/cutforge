@@ -106,7 +106,7 @@ export default function ExportPanel({
             )
           ) : (
             <>
-              Includes CutForge watermark ({billing.freeCredits} free export{billing.freeCredits === 1 ? "" : "s"} left) ·{" "}
+              Includes Flovura watermark ({billing.freeCredits} free export{billing.freeCredits === 1 ? "" : "s"} left) ·{" "}
               <Link href="/pricing" className="text-[#A8724A] hover:text-[#8F5D3A] underline underline-offset-2">
                 Remove it
               </Link>

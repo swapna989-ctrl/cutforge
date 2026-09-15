@@ -31,7 +31,7 @@ async function tick(): Promise<void> {
 }
 
 async function main() {
-  console.log("CutForge worker started, polling every", env.POLL_INTERVAL_MS, "ms");
+  console.log("Flovura worker started, polling every", env.POLL_INTERVAL_MS, "ms");
   console.log("[env]", environmentReport());
   while (running) {
     await tick();

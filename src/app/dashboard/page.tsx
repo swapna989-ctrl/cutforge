@@ -34,7 +34,7 @@ const FEATURES = [
   {
     icon: "calendar_month",
     title: "Multi-Platform Publishing",
-    body: "Post directly to TikTok, Reels, and YouTube Shorts from CutForge.",
+    body: "Post directly to TikTok, Reels, and YouTube Shorts from Flovura.",
     cta: "Coming soon",
     live: false,
   },
@@ -71,7 +71,7 @@ export default function DashboardHomePage() {
           Turn long videos into <span className="italic text-[#9a4153]">viral moments.</span>
         </h1>
         <p className="text-sm text-[#7B7579] leading-relaxed max-w-md">
-          CutForge finds the highest-retention moments in your footage and turns them into ready-to-post shorts —
+          Flovura finds the highest-retention moments in your footage and turns them into ready-to-post shorts —
           captioned, cropped, and scored.
         </p>
       </section>
