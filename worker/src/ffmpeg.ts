@@ -329,6 +329,20 @@ const WATERMARK_PNG = join(ASSETS_DIR, "watermark.png");
 // Bundling a real font (Geist, Vercel's OFL-licensed font already vendored by Next.js) and
 // pointing `fontsdir` at it removes the dependency on whatever fonts a given host has.
 const FONT_NAME = "Geist";
+
+// Geist only covers Latin script — a real production failure for Hindi source video confirmed
+// this: libass has zero Devanagari glyphs to draw with, so it silently renders nothing for that
+// text, same failure class as having no font at all, just scoped to one script. Noto Sans
+// Devanagari (Google's OFL-licensed font, verified against a real cmap to cover the Devanagari
+// block) is switched to per-word below wherever a word actually contains Devanagari characters,
+// rather than depending on the container having a working fontconfig fallback database — it
+// doesn't (same reasoning that ruled out relying on any system font in the first place).
+const FONT_NAME_DEVANAGARI = "Noto Sans Devanagari";
+const DEVANAGARI_RANGE = /[ऀ-ॿ]/;
+function isDevanagari(text: string): boolean {
+  return DEVANAGARI_RANGE.test(text);
+}
+
 const escapedFontsDir = `'${ASSETS_DIR.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
 
 function escapeFfmpegPath(p: string): string {
@@ -406,24 +420,47 @@ function toAssTime(seconds: number): string {
   return `${hours}:${pad(minutes)}:${pad(secs)}.${pad(centiseconds)}`;
 }
 
-/** Joins a chunk's words back into text with a line break at lineBreakAfterIndex — the plain,
- *  no-highlight rendering, and also the base every highlighted word is built from below. */
-function plainChunkText(chunk: CaptionChunk, wordOverride?: (word: CaptionWordLike, index: number) => string): string {
-  const parts: string[] = [];
-  chunk.words.forEach((word, i) => {
-    parts.push(wordOverride ? wordOverride(word, i) : escapeAssText(word.text));
-    if (i === chunk.lineBreakAfterIndex) parts.push("\\N");
-    else if (i < chunk.words.length - 1) parts.push(" ");
-  });
-  return parts.join("");
-}
-
 type CaptionWordLike = CaptionChunk["words"][number];
 
 /** &H00BBGGRR (style-line format, with an alpha byte) -> &HBBGGRR& (inline \c override format,
  *  without one) — ASS uses two different color syntaxes and neither is a prefix of the other. */
 function inlineColor(styleColor: string): string {
   return `${styleColor.replace(/^&H00/, "&H")}&`;
+}
+
+/**
+ * Renders one word, wrapping it in inline ASS override tags when it needs to differ from the
+ * style line's own defaults — a `\fn` font switch when the word contains Devanagari (the style
+ * line stays declared as Geist throughout; only the words that actually need it switch), a `\c`
+ * color switch when it's the one word currently highlighted (see buildChunkEvents), or both at
+ * once for a highlighted Devanagari word. Runs on every word unconditionally — including in the
+ * `classic` (no-highlight) style — since the font problem exists independently of whether any
+ * word is being color-highlighted.
+ */
+function wordText(word: CaptionWordLike, highlightColor: string | null, baseColor: string): string {
+  const escaped = escapeAssText(word.text);
+  const devanagari = isDevanagari(word.text);
+  if (!devanagari && !highlightColor) return escaped;
+
+  const openTags = [devanagari ? `\\fn${FONT_NAME_DEVANAGARI}` : "", highlightColor ? `\\c${inlineColor(highlightColor)}` : ""]
+    .filter(Boolean)
+    .join("");
+  const closeTags = [devanagari ? `\\fn${FONT_NAME}` : "", highlightColor ? `\\c${inlineColor(baseColor)}` : ""].filter(Boolean).join("");
+  return `{${openTags}}${escaped}{${closeTags}}`;
+}
+
+/** Joins a chunk's words back into text with a line break at lineBreakAfterIndex. `highlightIndex`
+ *  is the one word (if any) that should get the highlight color — plain/classic rendering passes
+ *  null, meaning no word gets `highlightColor`, but every word still runs through wordText so a
+ *  Devanagari font switch still applies. */
+function plainChunkText(chunk: CaptionChunk, highlightIndex: number | null, highlightColor: string | null, baseColor: string): string {
+  const parts: string[] = [];
+  chunk.words.forEach((word, i) => {
+    parts.push(wordText(word, i === highlightIndex ? highlightColor : null, baseColor));
+    if (i === chunk.lineBreakAfterIndex) parts.push("\\N");
+    else if (i < chunk.words.length - 1) parts.push(" ");
+  });
+  return parts.join("");
 }
 
 /**
@@ -441,18 +478,13 @@ function inlineColor(styleColor: string): string {
  */
 function buildChunkEvents(chunk: CaptionChunk, highlightColor: string | null, baseColor: string): { start: number; end: number; text: string }[] {
   if (!highlightColor) {
-    return [{ start: chunk.start, end: chunk.end, text: plainChunkText(chunk) }];
+    return [{ start: chunk.start, end: chunk.end, text: plainChunkText(chunk, null, null, baseColor) }];
   }
 
-  const highlightTag = inlineColor(highlightColor);
-  const baseTag = inlineColor(baseColor);
   let cumulative = chunk.start;
 
   return chunk.words.map((word, i) => {
-    const text = plainChunkText(chunk, (w, j) => {
-      const escaped = escapeAssText(w.text);
-      return j === i ? `{\\c${highlightTag}}${escaped}{\\c${baseTag}}` : escaped;
-    });
+    const text = plainChunkText(chunk, i, highlightColor, baseColor);
     const event = { start: cumulative, end: word.end, text };
     cumulative = word.end;
     return event;
