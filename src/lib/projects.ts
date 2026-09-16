@@ -110,7 +110,14 @@ export async function createProject(input: {
 
 export async function updateProject(
   id: string,
-  patch: Partial<{ pipelineStatus: PipelineStatus; progress: number; ratio: Ratio; sourceKey: string }>
+  patch: Partial<{
+    pipelineStatus: PipelineStatus;
+    progress: number;
+    ratio: Ratio;
+    sourceKey: string;
+    captionStyle: CaptionStyle;
+    captionLanguage: CaptionLanguage;
+  }>
 ): Promise<void> {
   const supabase = createClient();
   const update: Record<string, unknown> = {};
@@ -118,6 +125,8 @@ export async function updateProject(
   if (patch.progress !== undefined) update.progress = patch.progress;
   if (patch.ratio !== undefined) update.ratio = patch.ratio;
   if (patch.sourceKey !== undefined) update.source_key = patch.sourceKey;
+  if (patch.captionStyle !== undefined) update.caption_style = patch.captionStyle;
+  if (patch.captionLanguage !== undefined) update.caption_language = patch.captionLanguage;
   const { error } = await supabase.from("projects").update(update).eq("id", id);
   if (error) throw error;
 }
