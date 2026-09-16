@@ -25,6 +25,15 @@ export const TIER_CONFIG: Record<Exclude<PlanTier, "none">, {
 
 export const TIER_ORDER: Exclude<PlanTier, "none">[] = ["starter", "creator", "agency"];
 
+// One-time, no-auto-renewal top-ups — shared between the pricing page (display) and the
+// create-order API route (authoritative price lookup), so a manipulated client request can never
+// claim a different price than what's actually listed here.
+export const CREDIT_PACKS: { credits: number; price: number; badge?: string }[] = [
+  { credits: 10, price: 149 },
+  { credits: 30, price: 349 },
+  { credits: 100, price: 899, badge: "Best value per credit" },
+];
+
 export const TIER_BLURB: Record<Exclude<PlanTier, "none">, string> = {
   starter: "For getting your first clips out the door.",
   creator: "For creators publishing shorts every week.",

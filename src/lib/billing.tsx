@@ -87,9 +87,6 @@ type BillingContextValue = {
    * Spends this month's plan allowance first, then paid credits, then free credits.
    */
   consumeExportCredit: (creditsNeeded: number) => Promise<{ error: string | null }>;
-  buyCreditPack: (amount: number) => Promise<{ error: string | null }>;
-  subscribe: (tier: Exclude<PlanTier, "none">, cycle: BillingCycle) => Promise<{ error: string | null }>;
-  cancelPlan: () => Promise<{ error: string | null }>;
   /** Re-fetches the real balance from the DB — see the note on refresh() below for why this exists. */
   refresh: () => Promise<void>;
 };
@@ -149,18 +146,6 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     return callBillingRpc("consume_export_credit", { credits_needed: creditsNeeded });
   }
 
-  function buyCreditPack(amount: number) {
-    return callBillingRpc("buy_credit_pack", { amount });
-  }
-
-  function subscribe(tier: Exclude<PlanTier, "none">, cycle: BillingCycle) {
-    return callBillingRpc("set_subscription_tier", { new_tier: tier, new_cycle: cycle });
-  }
-
-  function cancelPlan() {
-    return callBillingRpc("set_subscription_tier", { new_tier: "none" });
-  }
-
   return (
     <BillingContext.Provider
       value={{
@@ -176,9 +161,6 @@ export function BillingProvider({ children }: { children: ReactNode }) {
         canExport,
         availableCredits,
         consumeExportCredit,
-        buyCreditPack,
-        subscribe,
-        cancelPlan,
         refresh,
       }}
     >

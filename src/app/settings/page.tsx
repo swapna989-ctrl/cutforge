@@ -111,8 +111,17 @@ export default function SettingsPage() {
 
   async function handleCancelPlan() {
     setPlanError(null);
-    const { error } = await billing.cancelPlan();
-    if (error) setPlanError(error);
+    try {
+      const res = await fetch("/api/billing/cancel-plan", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setPlanError(body?.error ?? "Could not cancel plan");
+        return;
+      }
+      await billing.refresh();
+    } catch {
+      setPlanError("Could not cancel plan");
+    }
   }
 
   function handleExportDefaultsSubmit(e: React.FormEvent) {

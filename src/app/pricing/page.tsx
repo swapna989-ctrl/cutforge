@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Script from "next/script";
 import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
 import { useRequireAuth } from "@/lib/auth";
@@ -12,6 +13,7 @@ import {
   TIER_BLURB,
   TIER_FEATURES,
   CREDIT_SECONDS,
+  CREDIT_PACKS,
   creditsToMinutes,
   formatMinutes,
   type BillingCycle,
@@ -20,11 +22,82 @@ import {
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
-const CREDIT_PACKS = [
-  { credits: 10, price: 149 },
-  { credits: 30, price: 349 },
-  { credits: 100, price: 899, badge: "Best value per credit" },
-];
+type RazorpaySuccessResponse = { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string };
+type RazorpayInstance = { open: () => void };
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: {
+      key: string;
+      amount: number;
+      currency: string;
+      order_id: string;
+      name: string;
+      description?: string;
+      theme?: { color: string };
+      handler: (response: RazorpaySuccessResponse) => void;
+      modal?: { ondismiss?: () => void };
+    }) => RazorpayInstance;
+  }
+}
+
+type CreateOrderBody =
+  | { kind: "credit_pack"; packCredits: number }
+  | { kind: "subscription"; tier: Exclude<PlanTier, "none">; cycle: BillingCycle };
+
+/** Creates a Razorpay order server-side, opens Checkout, and on success posts the payment back
+ *  for signature verification — the webhook (src/app/api/razorpay/webhook) is the reliability
+ *  fallback if the user closes the tab before this round-trip finishes, so a stalled `onSuccess`
+ *  here isn't the only way credits ever land. */
+async function startCheckout(body: CreateOrderBody, onSuccess: () => void, onError: (message: string) => void) {
+  try {
+    const createRes = await fetch("/api/razorpay/create-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const createBody = await createRes.json().catch(() => null);
+    if (!createRes.ok || !createBody) {
+      onError(createBody?.error ?? "Could not start checkout");
+      return;
+    }
+    const { orderId, amount, currency, keyId } = createBody as { orderId: string; amount: number; currency: string; keyId: string };
+
+    if (!window.Razorpay) {
+      onError("Payment SDK failed to load — check your connection and try again");
+      return;
+    }
+
+    const rzp = new window.Razorpay({
+      key: keyId,
+      amount,
+      currency,
+      order_id: orderId,
+      name: "Flovura",
+      theme: { color: "#ed8395" },
+      handler: async (response) => {
+        try {
+          const verifyRes = await fetch("/api/razorpay/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(response),
+          });
+          if (!verifyRes.ok) {
+            const verifyBody = await verifyRes.json().catch(() => null);
+            onError(verifyBody?.error ?? "Payment verification failed — contact support if you were charged");
+            return;
+          }
+          onSuccess();
+        } catch {
+          onError("Payment verification failed — contact support if you were charged");
+        }
+      },
+    });
+    rzp.open();
+  } catch {
+    onError("Could not start checkout");
+  }
+}
 
 export default function PricingPage() {
   const { ready, user } = useRequireAuth();
@@ -40,40 +113,51 @@ export default function PricingPage() {
     window.setTimeout(() => setPurchased((p) => (p === key ? null : p)), 1800);
   }
 
-  async function handleBuyPack(key: string, amount: number) {
+  function handleBuyPack(key: string, credits: number) {
     setActionError(null);
-    const { error } = await billing.buyCreditPack(amount);
-    if (error) {
-      setActionError(error);
-      return;
-    }
-    flash(key);
+    startCheckout(
+      { kind: "credit_pack", packCredits: credits },
+      async () => {
+        await billing.refresh();
+        flash(key);
+      },
+      setActionError
+    );
   }
 
-  async function handleSubscribe(tier: Exclude<PlanTier, "none">) {
+  function handleSubscribe(tier: Exclude<PlanTier, "none">) {
     setActionError(null);
-    const { error } = await billing.subscribe(tier, cycle);
-    if (error) {
-      setActionError(error);
-      return;
-    }
-    flash(tier);
+    startCheckout(
+      { kind: "subscription", tier, cycle },
+      async () => {
+        await billing.refresh();
+        flash(tier);
+      },
+      setActionError
+    );
   }
 
   async function handleCancelPlan() {
     setActionError(null);
-    const { error } = await billing.cancelPlan();
-    if (error) setActionError(error);
+    try {
+      const res = await fetch("/api/billing/cancel-plan", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setActionError(body?.error ?? "Could not cancel plan");
+        return;
+      }
+      await billing.refresh();
+    } catch {
+      setActionError("Could not cancel plan");
+    }
   }
 
   return (
     <DashboardShell>
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
       <div className="mb-8 text-center max-w-2xl mx-auto">
         <h1 className={`${playfair.className} text-2xl sm:text-3xl font-semibold text-[#1d1b1e] tracking-tight`}>Pricing</h1>
-        <p className="text-sm text-[#7B7579] mt-2">
-          Prices shown in INR, inclusive of 18% GST. This is a demo checkout — no real payment gateway is connected yet, purchases here
-          just update your account instantly.
-        </p>
+        <p className="text-sm text-[#7B7579] mt-2">Prices shown in INR, inclusive of 18% GST.</p>
       </div>
 
       <div className="bg-white border border-[#ECE5E6] rounded-2xl px-6 py-4 mb-8 max-w-2xl mx-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)]">
@@ -189,7 +273,7 @@ export default function PricingPage() {
                       ? "Subscribed"
                       : isCurrent
                         ? `Switch to ${cycle}`
-                        : "Subscribe (demo)"}
+                        : "Subscribe"}
                 </button>
               </div>
             );
@@ -225,7 +309,7 @@ export default function PricingPage() {
                   onClick={() => handleBuyPack(key, pack.credits)}
                   className="mt-auto py-2.5 rounded-full text-xs font-semibold bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 cursor-pointer"
                 >
-                  {purchased === key ? "Added" : "Buy now (demo)"}
+                  {purchased === key ? "Added" : "Buy now"}
                 </button>
               </div>
             );
