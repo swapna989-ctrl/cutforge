@@ -256,12 +256,31 @@ export function multiClipTargetDimensions(ratio: "9:16" | "16:9"): { width: numb
  * silently dropped the second clip's content entirely).
  *
  * Scales to cover the target box (`force_original_aspect_ratio=increase`), which can only ever
- * grow past the box on one axis, never stretch either axis independently, then center-crops the
+ * grow past the box on one axis, never stretch either axis independently, then crops the
  * overflow — chosen over letterboxing so mixed portrait/landscape clips fill the frame the same
  * way a phone-shot reel or short does, rather than adding black bars.
+ *
+ * `faceCenter`, when given, is a fraction (0-1) of the *source* frame's own width/height (see
+ * faceCrop.ts) — deliberately a fraction rather than absolute pixels, since the scaled frame's
+ * real dimensions at this filter stage are usually different from whatever small frame face
+ * detection ran on. The crop's x/y are built as ffmpeg expressions referencing the filter
+ * stage's own `in_w`/`in_h`, so ffmpeg does that arithmetic against the real scaled dimensions at
+ * render time rather than this function trying to precompute them in JS. `min(max(...))` clamps
+ * the box to stay fully inside the frame — without it, a face near an edge would push the crop
+ * box partly off-frame. Omitted (or null, e.g. no face was found), the crop falls back to
+ * ffmpeg's own default centered crop — today's exact existing behavior, unchanged.
  */
-export function normalizeToTargetResolution(inputPath: string, outputPath: string, width: number, height: number): Promise<void> {
-  const filter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`;
+export function normalizeToTargetResolution(
+  inputPath: string,
+  outputPath: string,
+  width: number,
+  height: number,
+  faceCenter?: { x: number; y: number } | null
+): Promise<void> {
+  const cropPosition = faceCenter
+    ? `:x='min(max(${faceCenter.x}*in_w-${width}/2,0),in_w-${width})':y='min(max(${faceCenter.y}*in_h-${height}/2,0),in_h-${height})'`
+    : "";
+  const filter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}${cropPosition}`;
   return runFfmpeg(
     ffmpeg(inputPath)
       .inputOptions(DECODE_OPTS)
