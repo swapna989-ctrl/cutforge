@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { deleteShort, type Short } from "@/lib/projects";
 
 function formatDuration(seconds: number): string {
@@ -282,7 +283,16 @@ function ShortDetailModal({
     };
   }, []);
 
-  return (
+  // Rendered into a portal on document.body rather than in place: WorkspaceShell's <main> has
+  // `relative z-10`, which — since any positioned element with a non-auto z-index creates its
+  // own stacking context — traps every descendant's z-index (including this modal's z-50)
+  // inside that context. The page's sticky header sits *outside* main with z-50 of its own, so
+  // it was compositing on top of the entire main box regardless of what z-index anything inside
+  // it used, covering exactly the modal's title/close row with no way to scroll past it — not a
+  // scroll bug at all, confirmed by inspecting the real deployed bundle after the previous
+  // (scroll-focused) fix didn't help. A portal escapes main's stacking context entirely instead
+  // of relying on ever-higher z-index numbers to outrun ancestors that might change later.
+  return createPortal(
     <div
       className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
       onClick={onClose}
@@ -372,7 +382,8 @@ function ShortDetailModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
