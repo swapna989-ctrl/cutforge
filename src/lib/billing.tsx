@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/client";
-import { canBuyCreditPacks, type PlanTier, type BillingCycle } from "@/lib/pricing";
+import type { PlanTier, BillingCycle } from "@/lib/pricing";
 
 export type { PlanTier, BillingCycle };
 
@@ -14,19 +14,11 @@ type BillingData = {
   billingCycle: BillingCycle;
   planCredits: number;
   planRenewsAt: string | null;
+  planExpiresAt: string | null;
 };
 
-/**
- * Every raw error a billing RPC can throw, translated into something a real user can actually
- * act on. buy_credit_pack/set_subscription_tier are special-cased entirely: they're locked to
- * service_role now (see callBillingRpc's comment above buyCreditPack), so literally any error
- * from them today just means "this isn't wired up to real payments yet" -- there's no business
- * logic left to distinguish, since it never runs.
- */
-function friendlyBillingError(fn: string, raw: string): string {
-  if (fn === "buy_credit_pack" || fn === "set_subscription_tier") {
-    return "This isn't available yet — we're finishing real payment support. Check back soon!";
-  }
+/** Every raw error a billing RPC can throw, translated into something a real user can actually act on. */
+function friendlyBillingError(_fn: string, raw: string): string {
   if (raw === "No credits remaining") return "You're out of credits — head to Pricing to get more and keep clipping.";
   if (raw === "No billing record for this user") return "Something's off with your account — please contact support.";
   return "Something went wrong — please try again.";
@@ -39,6 +31,7 @@ const DEFAULT_DATA: BillingData = {
   billingCycle: "monthly",
   planCredits: 0,
   planRenewsAt: null,
+  planExpiresAt: null,
 };
 
 type BillingRow = {
@@ -48,6 +41,8 @@ type BillingRow = {
   billing_cycle: string;
   plan_credits: number;
   plan_renews_at: string | null;
+  // Added by 0028_razorpay_payments.sql; undefined on a database that hasn't run it yet.
+  plan_expires_at?: string | null;
 };
 
 function mapRow(row: BillingRow): BillingData {
@@ -58,6 +53,7 @@ function mapRow(row: BillingRow): BillingData {
     billingCycle: row.billing_cycle as BillingCycle,
     planCredits: row.plan_credits,
     planRenewsAt: row.plan_renews_at,
+    planExpiresAt: row.plan_expires_at ?? null,
   };
 }
 
@@ -65,7 +61,9 @@ async function fetchBillingRow(userId: string): Promise<BillingData> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("billing")
-    .select("free_credits, paid_credits, plan_tier, billing_cycle, plan_credits, plan_renews_at")
+    // `*` rather than a column list: plan_expires_at only exists once 0028 has been run, and naming a
+    // missing column would fail this whole read (and zero out every balance in the app) until then.
+    .select("*")
     .eq("user_id", userId)
     .maybeSingle();
   if (error || !data) {
@@ -83,7 +81,10 @@ type BillingContextValue = {
   planTier: PlanTier;
   billingCycle: BillingCycle;
   planCredits: number;
+  /** When this month's plan credits next refill (a monthly plan: also when it ends unless paid again). */
   planRenewsAt: string | null;
+  /** When the period paid for ends (a yearly plan's is a year out); null for a plan that predates 0028. */
+  planExpiresAt: string | null;
   ready: boolean;
   hasActivePlan: boolean;
   /** True when the next export won't carry the Flovura watermark. */
@@ -103,8 +104,7 @@ type BillingContextValue = {
    * Spends this month's plan allowance first, then paid credits, then free credits.
    */
   consumeExportCredit: (creditsNeeded: number) => Promise<{ error: string | null }>;
-  buyCreditPack: (amount: number) => Promise<{ error: string | null }>;
-  subscribe: (tier: Exclude<PlanTier, "none">, cycle: BillingCycle) => Promise<{ error: string | null }>;
+  /** Ends the caller's own paid plan right away (no refund) -- see the note on cancelPlan() below. */
   cancelPlan: () => Promise<{ error: string | null }>;
   /** Re-fetches the real balance from the DB — see the note on refresh() below for why this exists. */
   refresh: () => Promise<void>;
@@ -165,31 +165,11 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     return callBillingRpc("consume_export_credit", { credits_needed: creditsNeeded });
   }
 
-  // buy_credit_pack/set_subscription_tier are deliberately locked to service_role, not
-  // authenticated (0012_lock_billing_grant_rpcs.sql) -- both could grant paid credits/tiers with
-  // no payment check at all, so they can only safely run from a real payment webhook that's
-  // already verified a charge, which doesn't exist yet (this whole checkout is still labeled
-  // "(demo)" in the UI). Calling either from here always fails right now; friendlyBillingError
-  // turns that into an honest "not available yet" instead of a raw permission-denied error.
-  function buyCreditPack(amount: number) {
-    // Packs are only sold to subscribers. The pricing page already hides them from everyone else, so
-    // this only fires from a stale tab (e.g. the plan was cancelled after the page loaded); the
-    // database refuses it as well, this just answers in plain words first.
-    if (!canBuyCreditPacks(data.planTier)) {
-      return Promise.resolve({ error: "Credit packs are available on an active plan — pick a plan first." });
-    }
-    return callBillingRpc("buy_credit_pack", { amount });
-  }
-
-  function subscribe(tier: Exclude<PlanTier, "none">, cycle: BillingCycle) {
-    return callBillingRpc("set_subscription_tier", { new_tier: tier, new_cycle: cycle });
-  }
-
+  // Buying a plan or a credit pack goes through Razorpay checkout (src/app/api/razorpay/*), which
+  // grants credits server-side once a payment is verified -- nothing the browser can call directly
+  // grants anything. Canceling is different: it can only ever reduce the caller's own plan, so a
+  // dedicated, narrowly-scoped RPC (0024_safe_cancel_subscription.sql) is safe to call from here.
   function cancelPlan() {
-    // A dedicated, narrowly-scoped RPC (0024_safe_cancel_subscription.sql), not
-    // set_subscription_tier -- that one can also grant a paid tier with no payment check, so it's
-    // service_role-only (see buyCreditPack's comment). Canceling can only ever reduce a user's own
-    // plan, never grant anything, so it's safe to leave callable from the browser.
     return callBillingRpc("cancel_my_subscription");
   }
 
@@ -202,14 +182,13 @@ export function BillingProvider({ children }: { children: ReactNode }) {
         billingCycle: data.billingCycle,
         planCredits: data.planCredits,
         planRenewsAt: data.planRenewsAt,
+        planExpiresAt: data.planExpiresAt,
         ready: state.ready,
         hasActivePlan,
         isWatermarkFree,
         canExport,
         availableCredits,
         consumeExportCredit,
-        buyCreditPack,
-        subscribe,
         cancelPlan,
         refresh,
       }}

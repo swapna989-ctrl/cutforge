@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Script from "next/script";
 import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
 import { useRequireAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
+import { startCheckout, type CheckoutRequest } from "@/lib/checkout";
 import {
   TIER_CONFIG,
   TIER_ORDER,
@@ -22,38 +24,64 @@ import {
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
+// A test-mode Razorpay key means every payment here is simulated, so say so instead of letting
+// anyone wonder whether a test card was really charged.
+const IS_TEST_MODE = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.startsWith("rzp_test_") ?? false;
+
+const RENEW_WINDOW_DAYS = 7;
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
 export default function PricingPage() {
   const { ready, user } = useRequireAuth();
   const billing = useBilling();
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
   const [purchased, setPurchased] = useState<string | null>(null);
+  // The card whose checkout is open or being confirmed, so a second click can't start another order.
+  const [busy, setBusy] = useState<string | null>(null);
+  // Read once, on mount: how close the plan is to ending only needs to be right when the page opens.
+  const [now] = useState(() => Date.now());
   const [actionError, setActionError] = useState<string | null>(null);
 
   if (!ready || !user) return null;
+
+  // A plan isn't billed automatically: it ends on this date unless it's paid for again.
+  const planEndsAt = billing.hasActivePlan ? (billing.planExpiresAt ?? billing.planRenewsAt) : null;
+  const daysLeft = planEndsAt ? (new Date(planEndsAt).getTime() - now) / 86_400_000 : null;
+  const canRenew = daysLeft !== null && daysLeft <= RENEW_WINDOW_DAYS;
 
   function flash(key: string) {
     setPurchased(key);
     window.setTimeout(() => setPurchased((p) => (p === key ? null : p)), 1800);
   }
 
-  async function handleBuyPack(key: string, amount: number) {
+  function checkout(key: string, request: CheckoutRequest, description: string) {
     setActionError(null);
-    const { error } = await billing.buyCreditPack(amount);
-    if (error) {
-      setActionError(error);
-      return;
-    }
-    flash(key);
+    setBusy(key);
+    startCheckout(request, {
+      description,
+      email: user?.email ?? undefined,
+      onSuccess: async () => {
+        await billing.refresh();
+        setBusy(null);
+        flash(key);
+      },
+      onError: (message) => {
+        setBusy(null);
+        setActionError(message);
+      },
+      onDismiss: () => setBusy(null),
+    });
   }
 
-  async function handleSubscribe(tier: Exclude<PlanTier, "none">) {
-    setActionError(null);
-    const { error } = await billing.subscribe(tier, cycle);
-    if (error) {
-      setActionError(error);
-      return;
-    }
-    flash(tier);
+  function handleBuyPack(key: string, credits: number) {
+    checkout(key, { kind: "credit_pack", packCredits: credits }, `${credits} credits`);
+  }
+
+  function handleSubscribe(tier: Exclude<PlanTier, "none">) {
+    checkout(tier, { kind: "subscription", tier, cycle }, `${TIER_LABEL[tier]} plan (${cycle})`);
   }
 
   async function handleCancelPlan() {
@@ -64,12 +92,13 @@ export default function PricingPage() {
 
   return (
     <DashboardShell>
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
       <div className="mb-8 text-center max-w-2xl mx-auto">
         <h1 className={`${playfair.className} text-2xl sm:text-3xl font-semibold text-[#1d1b1e] tracking-tight`}>Pricing</h1>
-        <p className="text-sm text-[#7B7579] mt-2">
-          Prices shown in INR, inclusive of 18% GST. This is a demo checkout — no real payment gateway is connected yet, purchases here
-          just update your account instantly.
-        </p>
+        <p className="text-sm text-[#7B7579] mt-2">Prices shown in INR, inclusive of 18% GST.</p>
+        {IS_TEST_MODE && (
+          <p className="text-xs text-[#9a4153] mt-2">Test mode: payments use Razorpay&apos;s test environment, so no real money moves.</p>
+        )}
       </div>
 
       <div className="bg-white border border-[#ECE5E6] rounded-2xl px-6 py-4 mb-8 max-w-2xl mx-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)]">
@@ -86,6 +115,7 @@ export default function PricingPage() {
           <span className="text-[#9a4153] font-semibold">
             {billing.hasActivePlan ? `${TIER_LABEL[billing.planTier]} · ${billing.planCredits} credits left this month` : "None"}
           </span>
+          {planEndsAt && <span className="text-[#7B7579]"> · active until {formatDate(planEndsAt)}</span>}
         </span>
         {billing.hasActivePlan && (
           <button onClick={handleCancelPlan} className="text-xs text-[#7B7579] hover:text-[#EF4444] underline underline-offset-2 cursor-pointer">
@@ -132,6 +162,10 @@ export default function PricingPage() {
           {TIER_ORDER.map((tier) => {
             const cfg = TIER_CONFIG[tier];
             const isCurrent = billing.planTier === tier;
+            const isCurrentCycle = isCurrent && billing.billingCycle === cycle;
+            // The plan you're on stays disabled until it's close to ending, then it's a Renew button.
+            const renewable = isCurrentCycle && canRenew;
+            const disabled = busy !== null || (isCurrentCycle && !renewable);
             const price = cycle === "monthly" ? cfg.priceMonthly : cfg.priceYearlyPerMonth;
             return (
               <div
@@ -171,21 +205,25 @@ export default function PricingPage() {
                   ))}
                 </ul>
                 <button
-                  disabled={isCurrent && billing.billingCycle === cycle}
+                  disabled={disabled}
                   onClick={() => handleSubscribe(tier)}
                   className={`mt-auto py-2.5 rounded-full text-xs font-semibold transition-all duration-150 ${
-                    isCurrent && billing.billingCycle === cycle
+                    isCurrentCycle && !renewable
                       ? "bg-[#FAF8F7] text-[#B3ACA6] cursor-not-allowed border border-[#ECE5E6]"
-                      : "bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] cursor-pointer"
+                      : "bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                   }`}
                 >
-                  {isCurrent && billing.billingCycle === cycle
-                    ? "Current plan"
+                  {busy === tier
+                    ? "Processing…"
                     : purchased === tier
                       ? "Subscribed"
-                      : isCurrent
-                        ? `Switch to ${cycle}`
-                        : "Subscribe (demo)"}
+                      : renewable
+                        ? "Renew now"
+                        : isCurrentCycle
+                          ? "Current plan"
+                          : isCurrent
+                            ? `Switch to ${cycle}`
+                            : "Subscribe"}
                 </button>
               </div>
             );
@@ -220,10 +258,11 @@ export default function PricingPage() {
                 <span className="text-[11px] text-[#B3ACA6] mb-4">≈ {formatMinutes(creditsToMinutes(pack.credits))} of video</span>
                 <span className="text-2xl font-semibold text-[#9a4153] mb-5">₹{pack.price.toLocaleString("en-IN")}</span>
                 <button
+                  disabled={busy !== null}
                   onClick={() => handleBuyPack(key, pack.credits)}
-                  className="mt-auto py-2.5 rounded-full text-xs font-semibold bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 cursor-pointer"
+                  className="mt-auto py-2.5 rounded-full text-xs font-semibold bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {purchased === key ? "Added" : "Buy now (demo)"}
+                  {busy === key ? "Processing…" : purchased === key ? "Added" : "Buy now"}
                 </button>
               </div>
             );
