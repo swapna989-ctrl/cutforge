@@ -262,12 +262,23 @@ function ShortDetailModal({
   // Locks the background page while the modal is open — without this, a touch-scroll gesture
   // that starts over the backdrop can chain to the page behind it instead of the modal's own
   // scroll area, which is disorienting on mobile since the backdrop visually looks like part of
-  // the same surface.
+  // the same surface. `overflow: hidden` on body alone doesn't actually stop background
+  // touch-scrolling on iOS Safari — a well-documented gap, not covered by testing this in a
+  // Chromium-based emulator — so this pins the body in place at its current scroll offset
+  // instead, which is the technique that actually holds on iOS too, then restores the exact
+  // scroll position on close.
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const previous = { position: body.style.position, top: body.style.top, width: body.style.width };
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
     return () => {
-      document.body.style.overflow = previousOverflow;
+      body.style.position = previous.position;
+      body.style.top = previous.top;
+      body.style.width = previous.width;
+      window.scrollTo(0, scrollY);
     };
   }, []);
 
