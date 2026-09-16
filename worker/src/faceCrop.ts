@@ -18,13 +18,22 @@ let detectorPromise: Promise<faceDetection.FaceDetector> | null = null;
 
 function getDetector(): Promise<faceDetection.FaceDetector> {
   if (!detectorPromise) {
-    detectorPromise = tf.setBackend("cpu").then(() =>
-      faceDetection.createDetector(faceDetection.SupportedModels.MediaPipeFaceDetector, {
-        runtime: "tfjs",
-        modelType: "short", // "short" = faces within ~2m of camera — matches talking-head/vlog content, this product's real use case.
-        maxFaces: 1,
-      })
-    );
+    detectorPromise = tf
+      .setBackend("cpu")
+      .then(() =>
+        faceDetection.createDetector(faceDetection.SupportedModels.MediaPipeFaceDetector, {
+          runtime: "tfjs",
+          modelType: "short", // "short" = faces within ~2m of camera — matches talking-head/vlog content, this product's real use case.
+          maxFaces: 1,
+        })
+      )
+      .catch((err) => {
+        // Without this, one transient failure (e.g. tfhub.dev briefly unreachable) would leave
+        // detectorPromise permanently rejected — every future job on this same long-lived worker
+        // process would fail this same way forever, instead of just retrying next time.
+        detectorPromise = null;
+        throw err;
+      });
   }
   return detectorPromise;
 }
@@ -74,7 +83,19 @@ export type FaceCenterFraction = { x: number; y: number };
  * guessing at a crop position with no real signal behind it.
  */
 export async function detectFaceCenterFraction(clipPath: string, durationSeconds: number): Promise<FaceCenterFraction | null> {
-  const detector = await getDetector();
+  let detector: faceDetection.FaceDetector;
+  try {
+    // Loading the detector fetches its model from tfhub.dev on first use (see getDetector) — a
+    // real network dependency this worker has never had before. If that fetch ever fails (a
+    // transient network issue, tfhub.dev being briefly unreachable from Railway), this must not
+    // fail the short entirely — falling back to plain center-crop is exactly what happened
+    // before this feature existed, so that's the worst this can ever get, never worse.
+    detector = await getDetector();
+  } catch (err) {
+    console.error("[faceCrop] detector failed to load, falling back to center crop:", err instanceof Error ? err.message : err);
+    return null;
+  }
+
   const sampleFractions = [0.1, 0.3, 0.5, 0.7, 0.9];
   const centers: FaceCenterFraction[] = [];
 
