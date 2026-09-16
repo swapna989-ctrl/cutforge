@@ -259,10 +259,33 @@ function ShortDetailModal({
     }
   }
 
+  // Locks the background page while the modal is open — without this, a touch-scroll gesture
+  // that starts over the backdrop can chain to the page behind it instead of the modal's own
+  // scroll area, which is disorienting on mobile since the backdrop visually looks like part of
+  // the same surface.
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   return (
-    <>
-      <div className="fixed inset-0 bg-black/50 z-50" onClick={onClose} />
-      <div className="fixed inset-x-4 top-[4%] bottom-[4%] sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-[420px] bg-white rounded-3xl z-50 overflow-y-auto shadow-[0_24px_64px_-12px_rgba(42,39,42,0.3)]">
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        // max-h uses dvh (dynamic viewport height), not vh: on mobile, percentage/vh-based
+        // heights are computed against the browser's *large* viewport (address bar hidden), so
+        // when the address bar is actually showing, a vh-sized panel can extend past the real
+        // visible area with no way to scroll the clipped part back into view — confirmed as the
+        // cause of "can't scroll up" reports on the previous top/bottom-percentage layout. dvh
+        // tracks the actual visible viewport instead.
+        className="w-full sm:w-[420px] max-h-[92dvh] bg-white rounded-3xl overflow-y-auto overscroll-contain shadow-[0_24px_64px_-12px_rgba(42,39,42,0.3)]"
+      >
         <div className="p-5">
           <div className="flex items-start justify-between gap-3 mb-4">
             <h2 className="text-base font-semibold text-[#1d1b1e] leading-snug">{short.hook}</h2>
@@ -338,7 +361,7 @@ function ShortDetailModal({
           </button>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
