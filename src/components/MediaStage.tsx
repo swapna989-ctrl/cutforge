@@ -118,7 +118,11 @@ export default function MediaStage({
   }
 
   const previewShapeClass =
-    ratio === "9:16" ? "aspect-[9/16] max-h-[62vh] sm:max-h-[68vh] mx-auto" : "aspect-video w-full max-w-3xl mx-auto";
+    ratio === "9:16"
+      ? "aspect-[9/16] max-h-[62vh] sm:max-h-[68vh] mx-auto"
+      : ratio === "1:1"
+        ? "aspect-square max-h-[62vh] sm:max-h-[68vh] mx-auto"
+        : "aspect-video w-full max-w-3xl mx-auto";
 
   return (
     <div className="space-y-4">

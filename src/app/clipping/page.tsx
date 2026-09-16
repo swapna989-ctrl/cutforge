@@ -397,7 +397,7 @@ export default function ClippingPage() {
             <div>
               <label className="block text-xs font-medium text-[#7B7579] mb-2">Aspect ratio</label>
               <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
-                {(["9:16", "16:9"] as Ratio[]).map((r) => (
+                {(["9:16", "16:9", "1:1"] as Ratio[]).map((r) => (
                   <button
                     key={r}
                     type="button"

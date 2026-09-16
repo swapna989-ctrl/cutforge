@@ -564,6 +564,15 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
                 <span className="material-symbols-outlined text-[14px]">crop_16_9</span>
                 <span>16:9</span>
               </button>
+              <button
+                onClick={() => handleSetRatio("1:1")}
+                className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none flex items-center space-x-1.5 cursor-pointer ${
+                  ratio === "1:1" ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[14px]">crop_square</span>
+                <span>1:1</span>
+              </button>
             </div>
           </div>
         )}

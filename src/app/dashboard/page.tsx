@@ -20,7 +20,7 @@ const FEATURES = [
   {
     icon: "crop_portrait",
     title: "Vertical Auto-Crop",
-    body: "Every short is automatically reframed to 9:16 or 16:9, ready to post without any manual cropping.",
+    body: "Every short is automatically reframed to 9:16, 16:9, or 1:1, ready to post without any manual cropping.",
     cta: "See it in action",
     live: true,
   },

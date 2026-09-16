@@ -236,13 +236,16 @@ export function extractClipRange(inputPath: string, startSeconds: number, endSec
 // One shared target size per project ratio, used only to bring multiple clips of possibly
 // different native resolutions into an identical format before concatenation. Matches the
 // existing 1280-long-edge memory budget (see SCALE_FILTER's own comment) so multi-clip encodes
-// stay within the same measured-safe footprint as the single-clip path.
-const MULTI_CLIP_TARGET_DIMENSIONS: Record<"9:16" | "16:9", { width: number; height: number }> = {
+// stay within the same measured-safe footprint as the single-clip path. 1:1 uses 720x720 rather
+// than, say, 1280x1280 — the latter would have ~78% more pixels than either existing ratio
+// (1280*1280 vs 720*1280), a real, unmeasured jump past the footprint that comment is about.
+const MULTI_CLIP_TARGET_DIMENSIONS: Record<"9:16" | "16:9" | "1:1", { width: number; height: number }> = {
   "16:9": { width: 1280, height: 720 },
   "9:16": { width: 720, height: 1280 },
+  "1:1": { width: 720, height: 720 },
 };
 
-export function multiClipTargetDimensions(ratio: "9:16" | "16:9"): { width: number; height: number } {
+export function multiClipTargetDimensions(ratio: "9:16" | "16:9" | "1:1"): { width: number; height: number } {
   return MULTI_CLIP_TARGET_DIMENSIONS[ratio];
 }
 

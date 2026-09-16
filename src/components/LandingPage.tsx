@@ -30,7 +30,7 @@ const FEATURES = [
   { icon: "auto_awesome", title: "AI Clip Planner", body: "Finds the strongest moments in a long video and turns each into its own candidate short." },
   { icon: "insights", title: "Viral score", body: "Every planned clip gets an AI-estimated score, so you know which ones to post first." },
   { icon: "closed_caption", title: "Kinetic captions", body: "Word-synced captions burned directly into the video — no separate captioning step." },
-  { icon: "crop", title: "Vertical & horizontal", body: "Export 9:16 for Shorts/Reels/TikTok or 16:9 for YouTube, from the same source." },
+  { icon: "crop", title: "Any format", body: "Export 9:16 for Shorts/Reels/TikTok, 16:9 for YouTube, or 1:1 for feed posts, from the same source." },
   { icon: "link", title: "Links or uploads", body: "Drop in a file, or paste a YouTube or Twitch link and let Flovura fetch it for you." },
   { icon: "verified", title: "No watermark", body: "Paid credits and subscriptions render clean — the free tier watermark comes off immediately." },
 ];

@@ -14,7 +14,7 @@ export type ProjectRow = {
   id: string;
   user_id: string;
   name: string;
-  ratio: "9:16" | "16:9";
+  ratio: "9:16" | "16:9" | "1:1";
   pipeline_status: "idle" | "ingesting" | "queued" | "synthesizing" | "ready" | "failed";
   progress: number;
   source_key: string | null;
