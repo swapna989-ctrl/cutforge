@@ -19,6 +19,7 @@ import {
 } from "./ffmpeg.js";
 import { transcribeCaptions, transcribeSegments } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
+import { detectFaceCenterFraction } from "./faceCrop.js";
 import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, type ProjectRow } from "./supabase.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
@@ -166,16 +167,28 @@ export async function processJob(job: ProjectRow): Promise<void> {
         await updateShort(short.id, { status: "processing" });
 
         const clipPath = join(tmpDir, `short-${i}.mp4`);
+        const clipCroppedPath = join(tmpDir, `short-${i}-cropped.mp4`);
         const clipAudioPath = join(tmpDir, `short-${i}-audio.mp3`);
         const clipAssPath = join(tmpDir, `short-${i}.ass`);
         const clipFinalPath = join(tmpDir, `short-${i}-final.mp4`);
 
         await extractClipRange(trimmedPath, candidate.startTime, candidate.endTime, clipPath);
-        await extractAudio(clipPath, clipAudioPath);
+
+        // Forces the user's actual chosen ratio here, regardless of which upstream branch
+        // produced clipPath — confirmed against real project data that most projects never hit
+        // the (rare) multi-clip branch that used to be the only place this ratio was enforced,
+        // so job.ratio was silently ignored for almost every real upload. Face-aware when a face
+        // is actually found (see faceCrop.ts); falls back to plain center-crop otherwise, same
+        // as the previous behavior for anything that does reach this shape-forcing step.
+        const target = multiClipTargetDimensions(job.ratio);
+        const faceCenter = await detectFaceCenterFraction(clipPath, candidate.endTime - candidate.startTime);
+        await normalizeToTargetResolution(clipPath, clipCroppedPath, target.width, target.height, faceCenter);
+
+        await extractAudio(clipCroppedPath, clipAudioPath);
         const captionChunks = await transcribeCaptions(clipAudioPath, job.caption_language);
-        const clipDimensions = await getVideoDimensions(clipPath);
+        const clipDimensions = await getVideoDimensions(clipCroppedPath);
         await finalizeVideo(
-          clipPath,
+          clipCroppedPath,
           captionChunks,
           job.caption_style,
           job.watermark,
