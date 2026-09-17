@@ -50,6 +50,11 @@ function contentDisposition(filename: string): string {
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
 }
 
+// Fetched once when a short/project first renders as ready (see useShortVideoUrl and
+// WorkspaceView's realPreviewUrl) and reused directly as the Download button's href, so the
+// actual click is a synchronous, already-known navigation with no fetch in between — that's what
+// lets it skip the popup-window workaround entirely for that path. 3600s (vs. the old 300s) gives
+// someone browsing a gallery a real hour before a sitting-open tab's presigned URL goes stale.
 export function getDownloadUrl(key: string, filename: string): Promise<string> {
   const command = new GetObjectCommand({
     Bucket: BUCKET,
@@ -57,7 +62,7 @@ export function getDownloadUrl(key: string, filename: string): Promise<string> {
     ResponseContentDisposition: contentDisposition(filename),
     ResponseContentType: "video/mp4",
   });
-  return getSignedUrl(s3, command, { expiresIn: 300 });
+  return getSignedUrl(s3, command, { expiresIn: 3600 });
 }
 
 /** For the crop tool's background image — deliberately no ResponseContentDisposition (inline,
@@ -65,20 +70,5 @@ export function getDownloadUrl(key: string, filename: string): Promise<string> {
  *  attachment, which would stop a browser's <img> decoder from rendering these JPEG bytes. */
 export function getImagePreviewUrl(key: string): Promise<string> {
   const command = new GetObjectCommand({ Bucket: BUCKET, Key: key, ResponseContentType: "image/jpeg" });
-  return getSignedUrl(s3, command, { expiresIn: 300 });
-}
-
-/**
- * Same file as getDownloadUrl, deliberately without the attachment disposition — a direct
- * navigation to this URL opens the browser's own native full-page video player instead of
- * forcing a save-to-disk prompt. This is the iOS fallback when the Web Share API either isn't
- * available or fails: Web Share file-sharing is a JS capability that varies by which iOS browser
- * you're in (confirmed via a real user report — works differently across iOS browsers, same
- * pattern as several other WebKit-only APIs third-party iOS browsers don't get full access to),
- * but every iOS browser's native video player offers "Save Video" on a long-press regardless,
- * since that's the OS's own media viewer taking over, not a per-browser JS feature.
- */
-export function getInlineVideoUrl(key: string): Promise<string> {
-  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key, ResponseContentType: "video/mp4" });
   return getSignedUrl(s3, command, { expiresIn: 300 });
 }

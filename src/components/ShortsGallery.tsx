@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { deleteShort, type Short } from "@/lib/projects";
-import { deliverDownload } from "@/lib/download";
+import { navigateToDownload } from "@/lib/download";
 
 function editHref(projectId: string, shortId: string, section: "settings" | "crop"): string {
   return `/shorts/edit?projectId=${projectId}&shortId=${shortId}&section=${section}`;
@@ -86,24 +86,6 @@ function useShortThumbnailUrl(projectId: string, short: Short): string | null {
   return thumbSrc;
 }
 
-async function downloadShort(projectId: string, shortId: string): Promise<void> {
-  // Opened synchronously so Safari still treats the later redirect as user-initiated — same
-  // technique WorkspaceView's own download button uses.
-  const downloadWindow = window.open("", "_blank");
-  try {
-    const res = await fetch(`/api/download-url?projectId=${projectId}&shortId=${shortId}`);
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new Error(body?.error ?? "Could not prepare download");
-    }
-    const { downloadUrl, inlineUrl } = (await res.json()) as { downloadUrl: string; inlineUrl?: string };
-    await deliverDownload(downloadUrl, downloadWindow, inlineUrl);
-  } catch (err) {
-    downloadWindow?.close();
-    throw err;
-  }
-}
-
 function ShortCard({
   projectId,
   short,
@@ -119,7 +101,6 @@ function ShortCard({
   const videoSrc = useShortVideoUrl(projectId, short);
   const thumbSrc = useShortThumbnailUrl(projectId, short);
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const meta = STATUS_META[short.status];
   const clipSeconds = short.sourceEndSeconds - short.sourceStartSeconds;
@@ -130,17 +111,16 @@ function ShortCard({
     router.push(editHref(projectId, short.id, section));
   }
 
-  async function handleDownload(e: React.MouseEvent) {
+  // videoSrc is already a real, presigned attachment-disposition URL (fetched the moment this
+  // card became ready — see useShortVideoUrl), so this is a synchronous, already-known
+  // navigation with no fetch in between. That's what actually fixes downloads "taking you to
+  // another page": the earlier version opened a blank popup tab to survive an async gap between
+  // click and knowing the URL, and that popup tab *was* the "another page" a real user reported.
+  // There's no gap left to work around, so there's no popup either.
+  function handleDownload(e: React.MouseEvent) {
     e.stopPropagation();
-    if (downloading || !isReady) return;
-    setDownloading(true);
-    try {
-      await downloadShort(projectId, short.id);
-    } catch {
-      // Surfaced in the detail modal if they open it; the grid card stays compact.
-    } finally {
-      setDownloading(false);
-    }
+    if (!isReady || !videoSrc) return;
+    navigateToDownload(videoSrc);
   }
 
   async function handleDelete(e: React.MouseEvent) {
@@ -215,11 +195,11 @@ function ShortCard({
           <button
             type="button"
             onClick={handleDownload}
-            disabled={!isReady || downloading}
+            disabled={!isReady || !videoSrc}
             className="w-full flex items-center justify-center gap-1.5 bg-[#1d1b1e] hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white py-2 rounded-full text-xs font-semibold transition-colors cursor-pointer"
           >
             <span className="material-symbols-outlined text-[14px]">download</span>
-            {downloading ? "…" : "Download HD"}
+            Download HD
           </button>
         </div>
 
@@ -276,8 +256,6 @@ function ShortDetailModal({
   const isReady = short.status === "ready";
   const videoSrc = useShortVideoUrl(projectId, short);
   const thumbSrc = useShortThumbnailUrl(projectId, short);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const router = useRouter();
 
@@ -285,17 +263,11 @@ function ShortDetailModal({
     router.push(editHref(projectId, short.id, section));
   }
 
-  async function handleDownload() {
-    if (downloading || !isReady) return;
-    setDownloading(true);
-    setDownloadError(null);
-    try {
-      await downloadShort(projectId, short.id);
-    } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : "Download failed");
-    } finally {
-      setDownloading(false);
-    }
+  // See ShortCard's handleDownload — videoSrc is already known, so this is a synchronous
+  // navigation with nothing to work around.
+  function handleDownload() {
+    if (!isReady || !videoSrc) return;
+    navigateToDownload(videoSrc);
   }
 
   async function handleDelete() {
@@ -385,7 +357,6 @@ function ShortDetailModal({
           </div>
 
           {short.status === "failed" && short.errorMessage && <p className="text-xs text-[#B0503E] mb-3">{short.errorMessage}</p>}
-          {downloadError && <p className="text-xs text-[#B0503E] mb-3">{downloadError}</p>}
 
           <div className="flex items-center gap-2 mb-5">
             <button
@@ -410,7 +381,7 @@ function ShortDetailModal({
             </button>
             <button
               onClick={handleDownload}
-              disabled={!isReady || downloading}
+              disabled={!isReady || !videoSrc}
               title="Download HD"
               className="w-9 h-9 rounded-full bg-[#1d1b1e] hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors cursor-pointer"
             >

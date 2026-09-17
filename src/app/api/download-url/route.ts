@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getDownloadUrl, getImagePreviewUrl, getInlineVideoUrl } from "@/lib/r2";
+import { getDownloadUrl, getImagePreviewUrl } from "@/lib/r2";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -66,11 +66,8 @@ export async function GET(request: Request) {
       .slice(0, 60) || `flovura-short-${short.position + 1}`;
     const filename = `${baseName}.mp4`;
 
-    // inlineUrl is the same file with no attachment disposition — see getInlineVideoUrl for why
-    // the client needs both (iOS's Web Share support for files varies by browser, confirmed by a
-    // real user, so this is the fallback that opens a native, long-press-to-save video instead).
-    const [downloadUrl, inlineUrl] = await Promise.all([getDownloadUrl(short.output_key, filename), getInlineVideoUrl(short.output_key)]);
-    return NextResponse.json({ downloadUrl, inlineUrl });
+    const downloadUrl = await getDownloadUrl(short.output_key, filename);
+    return NextResponse.json({ downloadUrl });
   }
 
   // RLS (select_own_projects) already scopes this to the caller's own row — no extra
@@ -84,6 +81,6 @@ export async function GET(request: Request) {
   const baseName = (project.name || "flovura-master").replace(/\.[^./\\]+$/, "");
   const filename = `${baseName}-flovura.mp4`;
 
-  const [downloadUrl, inlineUrl] = await Promise.all([getDownloadUrl(project.output_key, filename), getInlineVideoUrl(project.output_key)]);
-  return NextResponse.json({ downloadUrl, inlineUrl });
+  const downloadUrl = await getDownloadUrl(project.output_key, filename);
+  return NextResponse.json({ downloadUrl });
 }
