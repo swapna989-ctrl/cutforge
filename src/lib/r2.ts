@@ -67,3 +67,18 @@ export function getImagePreviewUrl(key: string): Promise<string> {
   const command = new GetObjectCommand({ Bucket: BUCKET, Key: key, ResponseContentType: "image/jpeg" });
   return getSignedUrl(s3, command, { expiresIn: 300 });
 }
+
+/**
+ * Same file as getDownloadUrl, deliberately without the attachment disposition — a direct
+ * navigation to this URL opens the browser's own native full-page video player instead of
+ * forcing a save-to-disk prompt. This is the iOS fallback when the Web Share API either isn't
+ * available or fails: Web Share file-sharing is a JS capability that varies by which iOS browser
+ * you're in (confirmed via a real user report — works differently across iOS browsers, same
+ * pattern as several other WebKit-only APIs third-party iOS browsers don't get full access to),
+ * but every iOS browser's native video player offers "Save Video" on a long-press regardless,
+ * since that's the OS's own media viewer taking over, not a per-browser JS feature.
+ */
+export function getInlineVideoUrl(key: string): Promise<string> {
+  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key, ResponseContentType: "video/mp4" });
+  return getSignedUrl(s3, command, { expiresIn: 300 });
+}

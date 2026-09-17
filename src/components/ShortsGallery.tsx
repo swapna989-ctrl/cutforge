@@ -96,8 +96,8 @@ async function downloadShort(projectId: string, shortId: string): Promise<void> 
       const body = await res.json().catch(() => null);
       throw new Error(body?.error ?? "Could not prepare download");
     }
-    const { downloadUrl } = (await res.json()) as { downloadUrl: string };
-    await deliverDownload(downloadUrl, downloadWindow);
+    const { downloadUrl, inlineUrl } = (await res.json()) as { downloadUrl: string; inlineUrl?: string };
+    await deliverDownload(downloadUrl, downloadWindow, inlineUrl);
   } catch (err) {
     downloadWindow?.close();
     throw err;

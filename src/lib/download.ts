@@ -8,18 +8,31 @@ function isIOS(): boolean {
 
 /**
  * Delivers an already-resolved presigned R2 URL to the user. Every platform except iOS just
- * navigates `downloadWindow` (or the current tab, if the popup was blocked) to it exactly as
- * before — that already works well (Content-Disposition: attachment triggers a normal
+ * navigates `downloadWindow` (or the current tab, if the popup was blocked) to `downloadUrl`
+ * exactly as before — that already works well (Content-Disposition: attachment triggers a normal
  * save-to-Downloads there).
  *
  * iOS Safari has no web API that saves straight to Photos/Camera Roll — navigating to an
  * attachment-disposition URL instead opens "Save to Files" (iCloud Drive/On My iPhone), which is
- * a real, confirmed user complaint (works fine on desktop, wrong destination on iPhone). The only
- * route to a "Save Video" (Camera Roll) option at all is the native share sheet via the Web Share
- * API, so iOS gets a real fetch-as-blob + navigator.share attempt first, falling back to the
- * plain-navigation path if sharing isn't available or fails for any other reason.
+ * a real, confirmed complaint (works fine on desktop, wrong destination on iPhone). The best
+ * available route is the native share sheet's "Save Video" option via the Web Share API, tried
+ * first here — but confirmed, via a real user testing in Chrome for iOS, that Web Share file
+ * support is inconsistent across which iOS *browser* you're in (every third-party iOS browser is
+ * a WKWebView wrapper that doesn't get full parity with Safari's own capabilities, the same
+ * pattern as WebRTC, Service Workers, and Safari Extensions all being Safari-only on iOS too) —
+ * canShare/share can legitimately be present but non-functional.
+ *
+ * So the fallback when Web Share isn't available *or fails for any reason* isn't the attachment
+ * URL — it's `inlineUrl` (no attachment disposition), which opens the browser's own native
+ * full-page video player. Long-press-to-save on that player's "Save Video" option is a system
+ * media-viewer feature, not a per-browser JS capability, so it works the same across Safari,
+ * Chrome, and any other WKWebView-based iOS browser. `inlineUrl` is optional only because the
+ * legacy master-download flow predates it being wired through everywhere; without it, iOS falls
+ * back to the same attachment URl every other platform uses.
  */
-export async function deliverDownload(downloadUrl: string, downloadWindow: Window | null): Promise<void> {
+export async function deliverDownload(downloadUrl: string, downloadWindow: Window | null, inlineUrl?: string): Promise<void> {
+  const iosFallbackUrl = inlineUrl ?? downloadUrl;
+
   if (isIOS() && typeof navigator.share === "function" && typeof navigator.canShare === "function") {
     try {
       const fileRes = await fetch(downloadUrl);
@@ -47,9 +60,20 @@ export async function deliverDownload(downloadUrl: string, downloadWindow: Windo
         return;
       }
       // Any other failure (blob fetch failed, canShare said no, share() itself rejected — e.g.
-      // expired user-activation) falls through to the plain-navigation path below, on the same
-      // still-open popup, instead of leaving the user stuck with neither outcome.
+      // expired user-activation, or this browser just doesn't really implement it) falls through
+      // to the native-player fallback below, on the same still-open popup.
     }
+
+    try {
+      if (downloadWindow && !downloadWindow.closed) {
+        downloadWindow.location.href = iosFallbackUrl;
+        return;
+      }
+    } catch {
+      // Falls through to the current-tab navigation at the bottom.
+    }
+    window.location.href = iosFallbackUrl;
+    return;
   }
 
   // Guarded rather than a plain `downloadWindow.location.href = ...`: the popup can be dead by

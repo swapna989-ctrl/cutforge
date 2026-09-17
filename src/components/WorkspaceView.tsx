@@ -496,7 +496,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
           const body = await res.json().catch(() => null);
           throw new Error(body?.error ?? "Could not prepare download — the link may have expired. Please try again.");
         }
-        const { downloadUrl } = (await res.json()) as { downloadUrl: string };
+        const { downloadUrl, inlineUrl } = (await res.json()) as { downloadUrl: string; inlineUrl?: string };
 
         // Server-enforced — this can genuinely fail (e.g. another tab spent the last credit in
         // the gap between the canExport check above and now), not just a local state update.
@@ -508,7 +508,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
           return;
         }
 
-        await deliverDownload(downloadUrl, downloadWindow);
+        await deliverDownload(downloadUrl, downloadWindow, inlineUrl);
 
         setExportSnapshot({ watermarkFree, label });
         setDownloadState("done");
