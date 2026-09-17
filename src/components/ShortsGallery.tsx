@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { deleteShort, type Short } from "@/lib/projects";
+import { deliverDownload } from "@/lib/download";
 
 function editHref(projectId: string, shortId: string, section: "settings" | "crop"): string {
   return `/shorts/edit?projectId=${projectId}&shortId=${shortId}&section=${section}`;
@@ -96,8 +97,7 @@ async function downloadShort(projectId: string, shortId: string): Promise<void> 
       throw new Error(body?.error ?? "Could not prepare download");
     }
     const { downloadUrl } = (await res.json()) as { downloadUrl: string };
-    if (downloadWindow) downloadWindow.location.href = downloadUrl;
-    else window.location.href = downloadUrl;
+    await deliverDownload(downloadUrl, downloadWindow);
   } catch (err) {
     downloadWindow?.close();
     throw err;

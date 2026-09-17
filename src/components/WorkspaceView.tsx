@@ -23,6 +23,7 @@ import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 import { creditsForDuration } from "@/lib/pricing";
 import { readVideoDuration, uploadClipToR2, MAX_VIDEO_SECONDS } from "@/lib/upload";
+import { deliverDownload } from "@/lib/download";
 
 export default function WorkspaceView({ initialProject }: { initialProject?: Project }) {
   const { prefs, ready: prefsReady } = usePrefs();
@@ -507,14 +508,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
           return;
         }
 
-        if (downloadWindow) {
-          downloadWindow.location.href = downloadUrl;
-        } else {
-          // Popup blocked (or window.open unsupported) — fall back to a same-tab navigation.
-          // This still downloads correctly rather than previewing, since the URL itself now
-          // carries a Content-Disposition: attachment header from the server.
-          window.location.href = downloadUrl;
-        }
+        await deliverDownload(downloadUrl, downloadWindow);
 
         setExportSnapshot({ watermarkFree, label });
         setDownloadState("done");
