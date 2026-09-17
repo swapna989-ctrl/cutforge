@@ -23,15 +23,22 @@ function isIOS(): boolean {
  * canShare/share can legitimately be present but non-functional.
  *
  * So the fallback when Web Share isn't available *or fails for any reason* isn't the attachment
- * URL — it's `inlineUrl` (no attachment disposition), which opens the browser's own native
- * full-page video player. Long-press-to-save on that player's "Save Video" option is a system
- * media-viewer feature, not a per-browser JS capability, so it works the same across Safari,
- * Chrome, and any other WKWebView-based iOS browser. `inlineUrl` is optional only because the
- * legacy master-download flow predates it being wired through everywhere; without it, iOS falls
- * back to the same attachment URl every other platform uses.
+ * URL — it's a small `/save-video` page (see that route) embedding `inlineUrl` (no attachment
+ * disposition) in a real `<video>` element, with an explicit "tap and hold, then Save Video"
+ * instruction next to it. A bare navigation to the raw video URL did open the same native player,
+ * but a real user testing it had no idea long-press was the intended interaction and asked where
+ * the download button was — the instruction only has anywhere to live once it's our own page
+ * instead of a raw media response. Long-press-to-save is a system media-viewer feature, not a
+ * per-browser JS capability, so it works the same across Safari, Chrome, and any other
+ * WKWebView-based iOS browser. `inlineUrl` is optional only because the legacy master-download
+ * flow predates it being wired through everywhere; without it, iOS falls back to the same
+ * attachment URL every other platform uses (no player to wrap, so no instructional page either).
  */
 export async function deliverDownload(downloadUrl: string, downloadWindow: Window | null, inlineUrl?: string): Promise<void> {
-  const iosFallbackUrl = inlineUrl ?? downloadUrl;
+  const iosFallbackUrl =
+    inlineUrl && typeof location !== "undefined"
+      ? `${location.origin}/save-video?src=${encodeURIComponent(inlineUrl)}`
+      : downloadUrl;
 
   if (isIOS() && typeof navigator.share === "function" && typeof navigator.canShare === "function") {
     try {
