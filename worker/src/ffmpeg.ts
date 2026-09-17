@@ -528,7 +528,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
     outlineWidth: 4,
-    highlightColor: "&H009583ED", // Flovura's own rose accent — same highlight mechanic as `rose`
+    highlightColor: "&H0014FF39", // neon green (#39FF14) — distinct from Rose's pink and Bold Yellow's yellow
   },
   minimalist: {
     fontSize: 60,
