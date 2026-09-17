@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { env } from "./env.js";
-import type { CaptionFont, CaptionStyle } from "./ffmpeg.js";
-import type { CaptionLanguage } from "./transcribe.js";
+import type { CaptionFont, CaptionPosition, CaptionStyle } from "./ffmpeg.js";
+import type { CaptionLanguage, CaptionLineCount } from "./transcribe.js";
 import type { ClipLength } from "./clipPlanner.js";
 
 // The service role key bypasses RLS entirely — this process is trusted backend code, not a
@@ -29,7 +29,9 @@ export type ProjectRow = {
   watermark: boolean;
   caption_style: CaptionStyle;
   caption_font: CaptionFont;
+  caption_position: CaptionPosition;
   caption_language: CaptionLanguage;
+  caption_line_count: CaptionLineCount;
   clip_length: ClipLength;
 };
 

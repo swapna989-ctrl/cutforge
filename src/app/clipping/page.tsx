@@ -11,7 +11,7 @@ import { useBilling } from "@/lib/billing";
 import { creditsForDuration } from "@/lib/pricing";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, type Project } from "@/lib/projects";
-import type { Ratio, CaptionStyle, CaptionFont, CaptionLanguage, ClipLength } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount, ClipLength } from "@/lib/pipeline";
 
 // A project sits in one of these while the worker is actively on it — used to decide whether
 // this page's own poll loop needs to keep running.
@@ -71,6 +71,20 @@ const CAPTION_STYLE_OPTIONS: {
   { value: "punch", label: "Punch", highlight: "#ed8395", bold: true },
   { value: "minimalist", label: "Minimalist", highlight: null, bold: false, uppercase: false },
   { value: "vlog", label: "Vlog", highlight: null, bold: false, italic: true, uppercase: false, textColor: "#F0B84B" },
+];
+
+const CAPTION_POSITION_OPTIONS: { value: CaptionPosition; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "top", label: "Top" },
+  { value: "middle", label: "Middle" },
+  { value: "bottom", label: "Bottom" },
+];
+
+const CAPTION_LINE_COUNT_OPTIONS: { value: CaptionLineCount; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "one_line", label: "One line" },
+  { value: "two_words", label: "Two words" },
+  { value: "three_lines", label: "Three lines" },
 ];
 
 function CaptionPreview({
@@ -138,7 +152,9 @@ export default function ClippingPage() {
   const [optionRatio, setOptionRatio] = useState<Ratio>("9:16");
   const [optionCaptionStyle, setOptionCaptionStyle] = useState<CaptionStyle>("classic");
   const [optionCaptionFont, setOptionCaptionFont] = useState<CaptionFont>("geist");
+  const [optionCaptionPosition, setOptionCaptionPosition] = useState<CaptionPosition>("auto");
   const [optionCaptionLanguage, setOptionCaptionLanguage] = useState<CaptionLanguage>("auto");
+  const [optionCaptionLineCount, setOptionCaptionLineCount] = useState<CaptionLineCount>("auto");
   const [optionClipLength, setOptionClipLength] = useState<ClipLength>("auto");
   // Required before Generate is enabled — this product downloads and reprocesses someone else's
   // YouTube/Twitch video or a file the user picked, so an explicit rights attestation is real
@@ -264,7 +280,9 @@ export default function ClippingPage() {
     setOptionRatio(prefsReady ? prefs.defaultRatio : "9:16");
     setOptionCaptionStyle(prefsReady ? prefs.defaultCaptionStyle : "classic");
     setOptionCaptionFont(prefsReady ? prefs.defaultCaptionFont : "geist");
+    setOptionCaptionPosition(prefsReady ? prefs.defaultCaptionPosition : "auto");
     setOptionCaptionLanguage(prefsReady ? prefs.defaultCaptionLanguage : "auto");
+    setOptionCaptionLineCount(prefsReady ? prefs.defaultCaptionLineCount : "auto");
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
@@ -319,7 +337,9 @@ export default function ClippingPage() {
     setOptionRatio(prefsReady ? prefs.defaultRatio : "9:16");
     setOptionCaptionStyle(prefsReady ? prefs.defaultCaptionStyle : "classic");
     setOptionCaptionFont(prefsReady ? prefs.defaultCaptionFont : "geist");
+    setOptionCaptionPosition(prefsReady ? prefs.defaultCaptionPosition : "auto");
     setOptionCaptionLanguage(prefsReady ? prefs.defaultCaptionLanguage : "auto");
+    setOptionCaptionLineCount(prefsReady ? prefs.defaultCaptionLineCount : "auto");
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
@@ -338,7 +358,9 @@ export default function ClippingPage() {
       defaultRatio: optionRatio,
       defaultCaptionStyle: optionCaptionStyle,
       defaultCaptionFont: optionCaptionFont,
+      defaultCaptionPosition: optionCaptionPosition,
       defaultCaptionLanguage: optionCaptionLanguage,
+      defaultCaptionLineCount: optionCaptionLineCount,
       defaultClipLength: optionClipLength,
     });
 
@@ -354,7 +376,9 @@ export default function ClippingPage() {
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
           captionFont: optionCaptionFont,
+          captionPosition: optionCaptionPosition,
           captionLanguage: optionCaptionLanguage,
+          captionLineCount: optionCaptionLineCount,
           clipLength: optionClipLength,
           pipelineStatus: "queued",
           progress: 0,
@@ -375,7 +399,9 @@ export default function ClippingPage() {
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
           captionFont: optionCaptionFont,
+          captionPosition: optionCaptionPosition,
           captionLanguage: optionCaptionLanguage,
+          captionLineCount: optionCaptionLineCount,
           clipLength: optionClipLength,
           pipelineStatus: "queued",
           progress: 0,
@@ -522,6 +548,42 @@ export default function ClippingPage() {
                     <span className={`block text-xs truncate ${opt.className} ${optionCaptionFont === opt.value ? "text-[#9a4153]" : "text-[#1d1b1e]"}`}>
                       {opt.label}
                     </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#7B7579] mb-2">Position</label>
+              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                {CAPTION_POSITION_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setOptionCaptionPosition(opt.value)}
+                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                      optionCaptionPosition === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#7B7579] mb-2">Line count</label>
+              <div className="inline-flex flex-wrap items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                {CAPTION_LINE_COUNT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setOptionCaptionLineCount(opt.value)}
+                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                      optionCaptionLineCount === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                    }`}
+                  >
+                    {opt.label}
                   </button>
                 ))}
               </div>

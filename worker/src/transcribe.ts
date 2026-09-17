@@ -22,12 +22,15 @@ const HINGLISH_PROMPT_HINT =
 
 export type CaptionWord = { text: string; start: number; end: number };
 /**
- * One on-screen caption burst — up to 2 lines, each word keeping its own real Whisper timestamp
- * (see buildChunk) so ffmpeg.ts can highlight the exact word being spoken as it plays, not just
- * show/hide the whole burst at once. `lineBreakAfterIndex` is the index of the last word on line
- * 1 (into `words`), or null for a single-line chunk.
+ * One on-screen caption burst — up to 3 lines (see CaptionLineCount), each word keeping its own
+ * real Whisper timestamp (see buildChunk/buildChunkFlexible) so ffmpeg.ts can highlight the exact
+ * word being spoken as it plays, not just show/hide the whole burst at once. `lineBreakIndices` is
+ * the index of the last word on each line except the last (into `words`) — empty for a
+ * single-line chunk, one entry for 2 lines, up to two entries for 3 lines.
  */
-export type CaptionChunk = { start: number; end: number; words: CaptionWord[]; lineBreakAfterIndex: number | null };
+export type CaptionChunk = { start: number; end: number; words: CaptionWord[]; lineBreakIndices: number[] };
+
+export type CaptionLineCount = "auto" | "one_line" | "two_words" | "three_lines";
 
 /**
  * The OpenAI SDK collapses every network-layer failure into a bare "Connection error.", which
@@ -74,7 +77,7 @@ function buildChunk(words: Word[]): CaptionChunk {
   const fullText = captionWords.map((w) => w.text).join(" ");
 
   if (fullText.length <= 24 || words.length < 2) {
-    return { start, end, words: captionWords, lineBreakAfterIndex: null };
+    return { start, end, words: captionWords, lineBreakIndices: [] };
   }
 
   const half = fullText.length / 2;
@@ -90,7 +93,87 @@ function buildChunk(words: Word[]): CaptionChunk {
   splitIndex = Math.min(Math.max(splitIndex, 1), words.length - 1);
 
   // Index of the last word on line 1 — splitIndex words (0..splitIndex-1) sit on line 1.
-  return { start, end, words: captionWords, lineBreakAfterIndex: splitIndex - 1 };
+  return { start, end, words: captionWords, lineBreakIndices: [splitIndex - 1] };
+}
+
+// Independent of buildChunk's own hardcoded 24 above (see CaptionChunk's own note) — buildChunk
+// stays untouched on purpose (today's default "auto" caption look already shipped and verified;
+// zero reason to risk it by routing it through the more general splitter below), so this can't
+// share a constant with it without editing that function.
+const SAFE_LINE_CHARS = 24;
+
+// Only "auto" (untouched, above) is exempt — the other three CaptionLineCount modes share these
+// per-mode grouping caps. maxLines forced to 1 for `two_words` is deliberate, not derived from the
+// character math below: two words read as one short punchy line, never as two near-empty stacked
+// lines, so there's no reason to ever let a 2-word chunk wrap.
+const LINE_COUNT_BOUNDS: Record<Exclude<CaptionLineCount, "auto">, { maxWords: number; maxChars: number; maxLines: number }> = {
+  one_line: { maxWords: 4, maxChars: SAFE_LINE_CHARS, maxLines: 1 },
+  two_words: { maxWords: 2, maxChars: 60, maxLines: 1 },
+  three_lines: { maxWords: 10, maxChars: 66, maxLines: 3 },
+};
+
+/**
+ * Generalizes buildChunk's own 2-line character-count split into up to `maxLines - 1` break
+ * points via a single forward pass. Two correctness properties that a naive per-target rescan
+ * doesn't guarantee (see this session's design review): (1) lines actually needed is capped by
+ * `words.length`, not just `maxLines`, so a short chunk never manufactures an empty trailing line;
+ * (2) each break is only accepted once enough words remain to give every still-unbroken line at
+ * least one word, which — since the scan only ever moves forward — makes each accepted break
+ * strictly later than the last, so two breaks can never land on the same or an out-of-order index.
+ * A single very long word can still end up alone on an over-width line (breaks only ever fall
+ * *between* words) — the same already-accepted limitation buildChunk's own 2-line split has today,
+ * not a new one. If the character-target scan still comes up short (that same long-word case can
+ * absorb more than one target in a single step), a top-up pass fills any remaining break greedily
+ * right after the previous one, which is always valid since `words.length` was already checked.
+ */
+function buildChunkFlexible(words: Word[], maxLines: number): CaptionChunk {
+  const start = words[0].start;
+  const end = words[words.length - 1].end;
+  const captionWords: CaptionWord[] = words.map((w) => ({ text: w.word.trim(), start: w.start, end: w.end }));
+  const fullText = captionWords.map((w) => w.text).join(" ");
+
+  const neededLines = Math.min(Math.ceil(fullText.length / SAFE_LINE_CHARS), maxLines, words.length);
+  if (neededLines <= 1) {
+    return { start, end, words: captionWords, lineBreakIndices: [] };
+  }
+
+  const breaks: number[] = [];
+  let accumulated = 0;
+  for (let i = 0; i < words.length - 1 && breaks.length < neededLines - 1; i++) {
+    accumulated += captionWords[i].text.length + 1;
+    const target = (fullText.length * (breaks.length + 1)) / neededLines;
+    const wordsLeftAfter = words.length - 1 - i;
+    const linesLeftAfter = neededLines - breaks.length - 1;
+    if (accumulated >= target && wordsLeftAfter >= linesLeftAfter) {
+      breaks.push(i);
+    }
+  }
+  while (breaks.length < neededLines - 1) {
+    breaks.push((breaks.length === 0 ? -1 : breaks[breaks.length - 1]) + 1);
+  }
+
+  return { start, end, words: captionWords, lineBreakIndices: breaks };
+}
+
+function chunkWordsFlexible(words: Word[], bounds: { maxWords: number; maxChars: number; maxLines: number }): CaptionChunk[] {
+  const chunks: CaptionChunk[] = [];
+  let current: Word[] = [];
+  let currentChars = 0;
+
+  for (const w of words) {
+    const text = w.word.trim();
+    if (!text) continue;
+    const wouldExceed = current.length >= bounds.maxWords || currentChars + text.length + 1 > bounds.maxChars;
+    if (wouldExceed && current.length > 0) {
+      chunks.push(buildChunkFlexible(current, bounds.maxLines));
+      current = [];
+      currentChars = 0;
+    }
+    current.push(w);
+    currentChars += text.length + 1;
+  }
+  if (current.length > 0) chunks.push(buildChunkFlexible(current, bounds.maxLines));
+  return chunks;
 }
 
 function chunkWords(words: Word[]): CaptionChunk[] {
@@ -120,7 +203,11 @@ function chunkWords(words: Word[]): CaptionChunk[] {
  * makes accurately-synced captions — including per-word highlight timing — possible; the
  * newer/cheaper transcribe models don't.
  */
-export async function transcribeCaptions(audioPath: string, language: CaptionLanguage = "auto"): Promise<CaptionChunk[]> {
+export async function transcribeCaptions(
+  audioPath: string,
+  language: CaptionLanguage = "auto",
+  lineCount: CaptionLineCount = "auto"
+): Promise<CaptionChunk[]> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
 
@@ -156,7 +243,10 @@ export async function transcribeCaptions(audioPath: string, language: CaptionLan
         throw new Error("Whisper returned 0 words for non-trivial audio");
       }
 
-      return chunkWords(words);
+      // chunkWords/buildChunk (today's exact, already-shipped default) handle "auto" directly and
+      // stay completely unparameterized — chunkWordsFlexible/buildChunkFlexible are a fully
+      // separate path for the 3 explicit modes, never the other way around.
+      return lineCount === "auto" ? chunkWords(words) : chunkWordsFlexible(words, LINE_COUNT_BOUNDS[lineCount]);
     } catch (err) {
       lastError = err;
       console.error(`Transcription attempt ${attempt}/${MAX_ATTEMPTS} failed:`, describeError(err));

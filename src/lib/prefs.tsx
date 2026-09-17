@@ -1,14 +1,16 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import type { Ratio, CaptionStyle, CaptionFont, CaptionLanguage, ClipLength } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount, ClipLength } from "@/lib/pipeline";
 import { useAuth } from "@/lib/auth";
 
 export type Prefs = {
   defaultRatio: Ratio;
   defaultCaptionStyle: CaptionStyle;
   defaultCaptionFont: CaptionFont;
+  defaultCaptionPosition: CaptionPosition;
   defaultCaptionLanguage: CaptionLanguage;
+  defaultCaptionLineCount: CaptionLineCount;
   defaultClipLength: ClipLength;
 };
 
@@ -16,7 +18,9 @@ const DEFAULT_PREFS: Prefs = {
   defaultRatio: "9:16",
   defaultCaptionStyle: "classic",
   defaultCaptionFont: "geist",
+  defaultCaptionPosition: "auto",
   defaultCaptionLanguage: "auto",
+  defaultCaptionLineCount: "auto",
   defaultClipLength: "auto",
 };
 
@@ -34,7 +38,9 @@ const VALID_CAPTION_FONTS: CaptionFont[] = [
   "zalando_sans",
   "cormorant_garamond",
 ];
+const VALID_CAPTION_POSITIONS: CaptionPosition[] = ["auto", "top", "middle", "bottom"];
 const VALID_CAPTION_LANGUAGES: CaptionLanguage[] = ["auto", "hinglish"];
+const VALID_CAPTION_LINE_COUNTS: CaptionLineCount[] = ["auto", "one_line", "two_words", "three_lines"];
 const VALID_CLIP_LENGTHS: ClipLength[] = ["auto", "short", "long"];
 
 function sanitize(raw: unknown): Prefs {
@@ -50,10 +56,18 @@ function sanitize(raw: unknown): Prefs {
       typeof r.defaultCaptionFont === "string" && VALID_CAPTION_FONTS.includes(r.defaultCaptionFont as CaptionFont)
         ? (r.defaultCaptionFont as CaptionFont)
         : DEFAULT_PREFS.defaultCaptionFont,
+    defaultCaptionPosition:
+      typeof r.defaultCaptionPosition === "string" && VALID_CAPTION_POSITIONS.includes(r.defaultCaptionPosition as CaptionPosition)
+        ? (r.defaultCaptionPosition as CaptionPosition)
+        : DEFAULT_PREFS.defaultCaptionPosition,
     defaultCaptionLanguage:
       typeof r.defaultCaptionLanguage === "string" && VALID_CAPTION_LANGUAGES.includes(r.defaultCaptionLanguage as CaptionLanguage)
         ? (r.defaultCaptionLanguage as CaptionLanguage)
         : DEFAULT_PREFS.defaultCaptionLanguage,
+    defaultCaptionLineCount:
+      typeof r.defaultCaptionLineCount === "string" && VALID_CAPTION_LINE_COUNTS.includes(r.defaultCaptionLineCount as CaptionLineCount)
+        ? (r.defaultCaptionLineCount as CaptionLineCount)
+        : DEFAULT_PREFS.defaultCaptionLineCount,
     defaultClipLength:
       typeof r.defaultClipLength === "string" && VALID_CLIP_LENGTHS.includes(r.defaultClipLength as ClipLength)
         ? (r.defaultClipLength as ClipLength)

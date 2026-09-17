@@ -405,6 +405,20 @@ function escapeFfmpegPath(p: string): string {
 
 export type CaptionStyle = "classic" | "bold_yellow" | "rose" | "glow" | "punch" | "minimalist" | "vlog";
 
+export type CaptionPosition = "auto" | "top" | "middle" | "bottom";
+
+// ASS v4+'s Alignment field uses a numpad layout: 1-3 bottom row, 4-6 middle row, 7-9 top row.
+// MarginV is a distance from the bottom edge (bottom row) or the top edge (top row) — libass
+// ignores it entirely for a vertically-centered (middle row) alignment, hence `marginFraction:
+// null` there rather than 0 (0 would wrongly imply "0 margin matters here"). `auto` and `bottom`
+// are deliberately identical: today's existing, already-shipped placement, unchanged.
+const CAPTION_POSITION_SPECS: Record<CaptionPosition, { alignment: number; marginFraction: number | null }> = {
+  auto: { alignment: 2, marginFraction: 0.1 },
+  bottom: { alignment: 2, marginFraction: 0.1 },
+  top: { alignment: 8, marginFraction: 0.1 },
+  middle: { alignment: 5, marginFraction: null },
+};
+
 type CaptionPresetSpec = {
   fontSize: number;
   bold: boolean;
@@ -448,8 +462,18 @@ type CaptionPresetSpec = {
 // is set to the true output height in buildAssDocument) — 20-22 against a 1280-tall vertical
 // short was only ~1.6% of frame height, nowhere near the large, easy-to-read-at-a-glance text
 // every reference short-form caption style (viral captions generally) actually uses. Bumped to
-// roughly 5% of a 1280-tall frame, with outlineWidth scaled to keep the same stroke-to-text-size
-// ratio each style had before, not just a thicker-looking outline relative to the new size.
+// roughly 5% of a 1280-tall frame.
+//
+// outlineWidth is deliberately NOT scaled proportionally with fontSize (an earlier version of
+// this comment said it was, preserving each style's original stroke-to-text ratio — that ratio
+// was already too thick and had just gone unnoticed at the original, much smaller font size).
+// Confirmed via real render: at these font sizes, anything above ~4-5px of outline starts
+// bridging the gap between adjacent letters (especially double letters like the "oo" in "woo!"),
+// fusing them into one connected blob instead of each glyph keeping its own separate, legible
+// border — real user-reported feedback, reproduced and compared frame-by-frame against a
+// reference screenshot showing clean, non-merged per-letter outlines. 4px reads clearly at every
+// fontSize in this table without merging; thinner presets (minimalist/vlog) go a little thinner
+// still, matching their own quieter/lighter-weight intent.
 const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
   classic: {
     fontSize: 64,
@@ -458,7 +482,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     uppercase: false,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 14,
+    outlineWidth: 4,
     highlightColor: null,
   },
   bold_yellow: {
@@ -468,7 +492,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     uppercase: false,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 16,
+    outlineWidth: 4,
     highlightColor: "&H0000FFFF", // yellow — the current word "pops" mid-sentence
   },
   rose: {
@@ -478,7 +502,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     uppercase: false,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 16,
+    outlineWidth: 4,
     highlightColor: "&H009583ED", // Flovura's own rose accent (#ed8395), converted to ASS BGR
   },
   glow: {
@@ -503,7 +527,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     uppercase: true,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 16,
+    outlineWidth: 4,
     highlightColor: "&H009583ED", // Flovura's own rose accent — same highlight mechanic as `rose`
   },
   minimalist: {
@@ -513,7 +537,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     uppercase: false,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 8, // thinner than classic's 14 — a quieter, lighter-weight look
+    outlineWidth: 3, // thinner than classic's 4 — a quieter, lighter-weight look
     highlightColor: null,
   },
   vlog: {
@@ -523,7 +547,7 @@ const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
     uppercase: false,
     primaryColor: "&H004BB8F0", // Flovura's own warm gold/amber accent (#F0B84B), converted to ASS BGR
     outlineColor: "&H00000000", // black
-    outlineWidth: 12,
+    outlineWidth: 3,
     highlightColor: null,
     fontOverride: "PT Serif", // the editorial/cinematic look needs a serif regardless of the chosen CaptionFont
   },
@@ -580,10 +604,11 @@ function wordText(word: CaptionWordLike, highlightColor: string | null, baseColo
   return `{${openTags}}${escaped}{${closeTags}}`;
 }
 
-/** Joins a chunk's words back into text with a line break at lineBreakAfterIndex. `highlightIndex`
- *  is the one word (if any) that should get the highlight color — plain/classic rendering passes
- *  null, meaning no word gets `highlightColor`, but every word still runs through wordText so a
- *  Devanagari font switch still applies. */
+/** Joins a chunk's words back into text with a line break after each index in
+ *  `lineBreakIndices` (0, 1, or 2 entries — see CaptionChunk). `highlightIndex` is the one word
+ *  (if any) that should get the highlight color — plain/classic rendering passes null, meaning no
+ *  word gets `highlightColor`, but every word still runs through wordText so a Devanagari font
+ *  switch still applies. */
 function plainChunkText(
   chunk: CaptionChunk,
   highlightIndex: number | null,
@@ -592,10 +617,11 @@ function plainChunkText(
   uppercase: boolean,
   baseFontName: string
 ): string {
+  const breaks = new Set(chunk.lineBreakIndices);
   const parts: string[] = [];
   chunk.words.forEach((word, i) => {
     parts.push(wordText(word, i === highlightIndex ? highlightColor : null, baseColor, uppercase, baseFontName));
-    if (i === chunk.lineBreakAfterIndex) parts.push("\\N");
+    if (breaks.has(i)) parts.push("\\N");
     else if (i < chunk.words.length - 1) parts.push(" ");
   });
   return parts.join("");
@@ -644,18 +670,29 @@ function buildChunkEvents(
  * the real frame, removes that ambiguity: every pixel value in the style below maps 1:1 onto the
  * actual output.
  */
-function buildAssDocument(chunks: CaptionChunk[], style: CaptionStyle, font: CaptionFont, width: number, height: number, marginV: number): string {
+function buildAssDocument(
+  chunks: CaptionChunk[],
+  style: CaptionStyle,
+  font: CaptionFont,
+  position: CaptionPosition,
+  width: number,
+  height: number
+): string {
   const preset = CAPTION_PRESETS[style];
   // A preset's own fontOverride (only Vlog has one) wins regardless of the separately-chosen
   // CaptionFont — same "this one thing always overrides" pattern as the Devanagari font switch.
   const baseFontName = preset.fontOverride ?? FONT_DISPLAY_NAMES[font];
 
+  const positionSpec = CAPTION_POSITION_SPECS[position];
+  const marginV = positionSpec.marginFraction != null ? Math.round(height * positionSpec.marginFraction) : 0;
+
   // BorderStyle=1 is libass's "outline" style (as opposed to 3, "opaque box") — Outline is then
   // the stroke width in pixels and OutlineColour the stroke's own color, fully opaque so it reads
-  // as a clean stroke rather than a tinted box. Alignment=2 is bottom-center; MarginV keeps the
-  // caption block inside the bottom third without pinning it to the very edge; MarginL/R keep it
-  // off the side edges. SecondaryColour is unused — the per-word highlight (see buildChunkEvents)
-  // is done with inline \c overrides on individual events instead, not this style's own colors.
+  // as a clean stroke rather than a tinted box. Alignment (see CAPTION_POSITION_SPECS) and MarginV
+  // together keep the caption block inside the chosen third of the frame without pinning it to the
+  // very edge; MarginL/R keep it off the side edges regardless of vertical position. SecondaryColour
+  // is unused — the per-word highlight (see buildChunkEvents) is done with inline \c overrides on
+  // individual events instead, not this style's own colors.
   const styleLine = [
     "Default",
     baseFontName,
@@ -675,7 +712,7 @@ function buildAssDocument(chunks: CaptionChunk[], style: CaptionStyle, font: Cap
     "1", // BorderStyle: outline, not opaque box
     String(preset.outlineWidth),
     "0", // Shadow
-    "2", // Alignment: bottom-center
+    String(positionSpec.alignment),
     "48",
     "48",
     String(marginV), // MarginL, MarginR, MarginV
@@ -731,14 +768,14 @@ export async function finalizeVideo(
   chunks: CaptionChunk[],
   captionStyle: CaptionStyle,
   captionFont: CaptionFont,
+  captionPosition: CaptionPosition,
   watermark: boolean,
   outputWidth: number,
   outputHeight: number,
   outputPath: string,
   assPath: string
 ): Promise<void> {
-  const marginV = Math.round(outputHeight * 0.1);
-  await writeFile(assPath, buildAssDocument(chunks, captionStyle, captionFont, outputWidth, outputHeight, marginV), "utf-8");
+  await writeFile(assPath, buildAssDocument(chunks, captionStyle, captionFont, captionPosition, outputWidth, outputHeight), "utf-8");
 
   const escapedAssPath = escapeFfmpegPath(assPath);
   const subtitlesFilter = `subtitles=${escapedAssPath}:fontsdir=${escapedFontsDir}`;

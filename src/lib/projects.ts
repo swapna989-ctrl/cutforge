@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
-import type { PipelineStatus, Ratio, CaptionStyle, CaptionFont, CaptionLanguage, ClipLength } from "@/lib/pipeline";
+import type { PipelineStatus, Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount, ClipLength } from "@/lib/pipeline";
 
 export type Project = {
   id: string;
@@ -7,7 +7,9 @@ export type Project = {
   ratio: Ratio;
   captionStyle: CaptionStyle;
   captionFont: CaptionFont;
+  captionPosition: CaptionPosition;
   captionLanguage: CaptionLanguage;
+  captionLineCount: CaptionLineCount;
   clipLength: ClipLength;
   pipelineStatus: PipelineStatus;
   progress: number;
@@ -24,7 +26,9 @@ type ProjectRow = {
   ratio: string;
   caption_style: string;
   caption_font: string;
+  caption_position: string;
   caption_language: string;
+  caption_line_count: string;
   clip_length: string;
   pipeline_status: string;
   progress: number;
@@ -42,7 +46,9 @@ function mapRow(row: ProjectRow): Project {
     ratio: row.ratio as Ratio,
     captionStyle: row.caption_style as CaptionStyle,
     captionFont: row.caption_font as CaptionFont,
+    captionPosition: row.caption_position as CaptionPosition,
     captionLanguage: row.caption_language as CaptionLanguage,
+    captionLineCount: row.caption_line_count as CaptionLineCount,
     clipLength: row.clip_length as ClipLength,
     pipelineStatus,
     progress: row.progress,
@@ -78,9 +84,14 @@ export async function createProject(input: {
   /** Which font family the worker burns in — an independent dimension from captionStyle, see
    *  worker/src/ffmpeg.ts's FONT_DISPLAY_NAMES. */
   captionFont: CaptionFont;
+  /** Where captions sit vertically — see worker/src/ffmpeg.ts's CAPTION_POSITION_SPECS. */
+  captionPosition: CaptionPosition;
   /** Whether to bias transcription toward Romanized Hindi — see worker/src/transcribe.ts's
    *  HINGLISH_PROMPT_HINT. Best-effort, opt-in. */
   captionLanguage: CaptionLanguage;
+  /** How aggressively captions are chunked/wrapped — see worker/src/transcribe.ts's
+   *  LINE_COUNT_BOUNDS, which is what actually enforces it. */
+  captionLineCount: CaptionLineCount;
   /** Which duration range the AI clip planner targets — see worker/src/clipPlanner.ts's
    *  CLIP_LENGTH_BOUNDS, which is what actually enforces it. */
   clipLength: ClipLength;
@@ -108,7 +119,9 @@ export async function createProject(input: {
       ratio: input.ratio,
       caption_style: input.captionStyle,
       caption_font: input.captionFont,
+      caption_position: input.captionPosition,
       caption_language: input.captionLanguage,
+      caption_line_count: input.captionLineCount,
       clip_length: input.clipLength,
       pipeline_status: input.pipelineStatus,
       progress: input.progress,
@@ -131,7 +144,9 @@ export async function updateProject(
     sourceKey: string;
     captionStyle: CaptionStyle;
     captionFont: CaptionFont;
+    captionPosition: CaptionPosition;
     captionLanguage: CaptionLanguage;
+    captionLineCount: CaptionLineCount;
     clipLength: ClipLength;
   }>
 ): Promise<void> {
@@ -143,7 +158,9 @@ export async function updateProject(
   if (patch.sourceKey !== undefined) update.source_key = patch.sourceKey;
   if (patch.captionStyle !== undefined) update.caption_style = patch.captionStyle;
   if (patch.captionFont !== undefined) update.caption_font = patch.captionFont;
+  if (patch.captionPosition !== undefined) update.caption_position = patch.captionPosition;
   if (patch.captionLanguage !== undefined) update.caption_language = patch.captionLanguage;
+  if (patch.captionLineCount !== undefined) update.caption_line_count = patch.captionLineCount;
   if (patch.clipLength !== undefined) update.clip_length = patch.clipLength;
   const { error } = await supabase.from("projects").update(update).eq("id", id);
   if (error) throw error;

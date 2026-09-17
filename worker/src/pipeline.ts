@@ -185,13 +185,14 @@ export async function processJob(job: ProjectRow): Promise<void> {
         await normalizeToTargetResolution(clipPath, clipCroppedPath, target.width, target.height, faceCenter);
 
         await extractAudio(clipCroppedPath, clipAudioPath);
-        const captionChunks = await transcribeCaptions(clipAudioPath, job.caption_language);
+        const captionChunks = await transcribeCaptions(clipAudioPath, job.caption_language, job.caption_line_count);
         const clipDimensions = await getVideoDimensions(clipCroppedPath);
         await finalizeVideo(
           clipCroppedPath,
           captionChunks,
           job.caption_style,
           job.caption_font,
+          job.caption_position,
           job.watermark,
           clipDimensions.width,
           clipDimensions.height,
