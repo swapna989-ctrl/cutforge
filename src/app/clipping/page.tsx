@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Playfair_Display } from "next/font/google";
+import { Playfair_Display, Montserrat, Poppins, Fredoka, PT_Serif, Roboto, Ubuntu, Zalando_Sans, Cormorant_Garamond } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
 import ProjectCard from "@/components/ProjectCard";
 import { useRequireAuth } from "@/lib/auth";
@@ -11,13 +11,38 @@ import { useBilling } from "@/lib/billing";
 import { creditsForDuration } from "@/lib/pricing";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, updateProject, deleteProject, type Project } from "@/lib/projects";
-import type { Ratio, CaptionStyle, CaptionLanguage, ClipLength } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionFont, CaptionLanguage, ClipLength } from "@/lib/pipeline";
 
 // A project sits in one of these while the worker is actively on it — used to decide whether
 // this page's own poll loop needs to keep running.
 const IN_PROGRESS_STATUSES = ["ingesting", "queued", "synthesizing"];
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
+
+// Loaded here (rather than a manual Google Fonts <link>) purely so the font picker below can show
+// each name set in its own real typeface — self-hosted by Next.js at build time, same as Playfair
+// above. Regular weight only, matching the actual bundled worker font files these map to (see
+// worker/src/ffmpeg.ts's FONT_DISPLAY_NAMES) — this preview is never what actually gets burned in.
+const montserrat = Montserrat({ subsets: ["latin"], weight: ["400"] });
+const poppins = Poppins({ subsets: ["latin"], weight: ["400"] });
+const fredoka = Fredoka({ subsets: ["latin"], weight: ["400"] });
+const ptSerif = PT_Serif({ subsets: ["latin"], weight: ["400"] });
+const roboto = Roboto({ subsets: ["latin"], weight: ["400"] });
+const ubuntu = Ubuntu({ subsets: ["latin"], weight: ["400"] });
+const zalandoSans = Zalando_Sans({ subsets: ["latin"], weight: ["400"] });
+const cormorantGaramond = Cormorant_Garamond({ subsets: ["latin"], weight: ["400"] });
+
+const CAPTION_FONT_OPTIONS: { value: CaptionFont; label: string; className: string }[] = [
+  { value: "geist", label: "Geist", className: "" }, // the page's own body font — no extra class needed
+  { value: "montserrat", label: "Montserrat", className: montserrat.className },
+  { value: "poppins", label: "Poppins", className: poppins.className },
+  { value: "fredoka", label: "Fredoka", className: fredoka.className },
+  { value: "pt_serif", label: "PT Serif", className: ptSerif.className },
+  { value: "roboto", label: "Roboto", className: roboto.className },
+  { value: "ubuntu", label: "Ubuntu", className: ubuntu.className },
+  { value: "zalando_sans", label: "Zalando Sans", className: zalandoSans.className },
+  { value: "cormorant_garamond", label: "Cormorant Garamond", className: cormorantGaramond.className },
+];
 
 // The real signup grant every new account gets (supabase/migrations/0002_billing.sql) — the
 // only fixed "total" that actually exists for credits. Paid packs (10/30/100) have no fixed
@@ -26,20 +51,56 @@ const FREE_CREDITS_GRANT = 5;
 
 // Mirrors worker/src/ffmpeg.ts's CAPTION_PRESETS closely enough for a preview swatch — the
 // worker's own values are what actually render, this is just so a user can see roughly what
-// they're picking before it's burned into a real video.
-const CAPTION_STYLE_OPTIONS: { value: CaptionStyle; label: string; highlight: string | null }[] = [
-  { value: "classic", label: "Classic", highlight: null },
-  { value: "bold_yellow", label: "Bold Yellow", highlight: "#FFFF00" },
-  { value: "rose", label: "Rose", highlight: "#ed8395" },
+// they're picking before it's burned into a real video. `glow` approximates its real two-layer
+// blurred-halo render (see ffmpeg.ts) with a CSS text-shadow — close enough for a small swatch,
+// not meant to be pixel-identical.
+const CAPTION_STYLE_OPTIONS: {
+  value: CaptionStyle;
+  label: string;
+  highlight: string | null;
+  bold: boolean;
+  italic?: boolean;
+  uppercase?: boolean;
+  textColor?: string;
+  glow?: boolean;
+}[] = [
+  { value: "classic", label: "Classic", highlight: null, bold: false },
+  { value: "bold_yellow", label: "Bold Yellow", highlight: "#FFFF00", bold: true },
+  { value: "rose", label: "Rose", highlight: "#ed8395", bold: true },
+  { value: "glow", label: "Glow", highlight: null, bold: true, glow: true },
+  { value: "punch", label: "Punch", highlight: "#ed8395", bold: true },
+  { value: "minimalist", label: "Minimalist", highlight: null, bold: false, uppercase: false },
+  { value: "vlog", label: "Vlog", highlight: null, bold: false, italic: true, uppercase: false, textColor: "#F0B84B" },
 ];
 
-function CaptionPreview({ highlight, bold }: { highlight: string | null; bold: boolean }) {
-  const strokeStyle = { WebkitTextStroke: "2px black", paintOrder: "stroke fill" } as const;
+function CaptionPreview({
+  highlight,
+  bold,
+  italic = false,
+  uppercase = true,
+  textColor = "#fff",
+  glow = false,
+}: {
+  highlight: string | null;
+  bold: boolean;
+  italic?: boolean;
+  uppercase?: boolean;
+  textColor?: string;
+  glow?: boolean;
+}) {
+  const strokeStyle = {
+    WebkitTextStroke: glow ? "0" : "2px black",
+    paintOrder: "stroke fill",
+    textShadow: glow ? "0 0 4px #fff, 0 0 8px #fff" : undefined,
+  } as const;
   return (
     <div className="rounded-lg bg-[#1a1a1a] px-2 py-3 flex items-center justify-center leading-tight">
-      <span className={`text-[11px] text-white uppercase ${bold ? "font-extrabold" : "font-medium"}`} style={strokeStyle}>
-        SAMPLE{" "}
-        <span style={{ ...strokeStyle, color: highlight ?? "#fff" }}>TEXT</span>
+      <span
+        className={`text-[11px] ${uppercase ? "uppercase" : ""} ${bold ? "font-extrabold" : "font-medium"} ${italic ? "italic" : ""}`}
+        style={{ ...strokeStyle, color: textColor }}
+      >
+        Sample{" "}
+        <span style={{ ...strokeStyle, color: highlight ?? textColor }}>text</span>
       </span>
     </div>
   );
@@ -73,6 +134,7 @@ export default function ClippingPage() {
   } | null>(null);
   const [optionRatio, setOptionRatio] = useState<Ratio>("9:16");
   const [optionCaptionStyle, setOptionCaptionStyle] = useState<CaptionStyle>("classic");
+  const [optionCaptionFont, setOptionCaptionFont] = useState<CaptionFont>("geist");
   const [optionCaptionLanguage, setOptionCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [optionClipLength, setOptionClipLength] = useState<ClipLength>("auto");
   // Required before Generate is enabled — this product downloads and reprocesses someone else's
@@ -198,6 +260,7 @@ export default function ClippingPage() {
     // rather than staring at a bare spinner with nothing to do until it finishes.
     setOptionRatio(prefsReady ? prefs.defaultRatio : "9:16");
     setOptionCaptionStyle(prefsReady ? prefs.defaultCaptionStyle : "classic");
+    setOptionCaptionFont(prefsReady ? prefs.defaultCaptionFont : "geist");
     setOptionCaptionLanguage(prefsReady ? prefs.defaultCaptionLanguage : "auto");
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
@@ -222,6 +285,7 @@ export default function ClippingPage() {
         name: files[0].name,
         ratio: prefsReady ? prefs.defaultRatio : "9:16",
         captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
+        captionFont: prefsReady ? prefs.defaultCaptionFont : "geist",
         captionLanguage: prefsReady ? prefs.defaultCaptionLanguage : "auto",
         clipLength: prefsReady ? prefs.defaultClipLength : "auto",
         pipelineStatus: "ingesting",
@@ -277,6 +341,7 @@ export default function ClippingPage() {
 
     setOptionRatio(prefsReady ? prefs.defaultRatio : "9:16");
     setOptionCaptionStyle(prefsReady ? prefs.defaultCaptionStyle : "classic");
+    setOptionCaptionFont(prefsReady ? prefs.defaultCaptionFont : "geist");
     setOptionCaptionLanguage(prefsReady ? prefs.defaultCaptionLanguage : "auto");
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
@@ -295,6 +360,7 @@ export default function ClippingPage() {
     updatePrefs({
       defaultRatio: optionRatio,
       defaultCaptionStyle: optionCaptionStyle,
+      defaultCaptionFont: optionCaptionFont,
       defaultCaptionLanguage: optionCaptionLanguage,
       defaultClipLength: optionClipLength,
     });
@@ -305,6 +371,7 @@ export default function ClippingPage() {
         await updateProject(pending.projectId, {
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
+          captionFont: optionCaptionFont,
           captionLanguage: optionCaptionLanguage,
           clipLength: optionClipLength,
           pipelineStatus: "queued",
@@ -316,6 +383,7 @@ export default function ClippingPage() {
                   ...p,
                   ratio: optionRatio,
                   captionStyle: optionCaptionStyle,
+                  captionFont: optionCaptionFont,
                   captionLanguage: optionCaptionLanguage,
                   clipLength: optionClipLength,
                   pipelineStatus: "queued",
@@ -328,6 +396,7 @@ export default function ClippingPage() {
           name: pending.label,
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
+          captionFont: optionCaptionFont,
           captionLanguage: optionCaptionLanguage,
           clipLength: optionClipLength,
           pipelineStatus: "queued",
@@ -442,12 +511,39 @@ export default function ClippingPage() {
                       optionCaptionStyle === opt.value ? "border-[#ed8395] ring-2 ring-[#ed8395]/25" : "border-[#ECE5E6] hover:border-[#D8D0CE]"
                     }`}
                   >
-                    <CaptionPreview highlight={opt.highlight} bold={opt.value !== "classic"} />
+                    <CaptionPreview
+                      highlight={opt.highlight}
+                      bold={opt.bold}
+                      italic={opt.italic}
+                      uppercase={opt.uppercase}
+                      textColor={opt.textColor}
+                      glow={opt.glow}
+                    />
                     <span
                       className={`block text-center text-[11px] mt-1.5 ${
                         optionCaptionStyle === opt.value ? "text-[#9a4153] font-semibold" : "text-[#7B7579]"
                       }`}
                     >
+                      {opt.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#7B7579] mb-2">Font</label>
+              <div className="grid grid-cols-3 gap-2">
+                {CAPTION_FONT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setOptionCaptionFont(opt.value)}
+                    className={`rounded-xl border px-2 py-2.5 text-center transition-all duration-150 cursor-pointer ${
+                      optionCaptionFont === opt.value ? "border-[#ed8395] ring-2 ring-[#ed8395]/25" : "border-[#ECE5E6] hover:border-[#D8D0CE]"
+                    }`}
+                  >
+                    <span className={`block text-xs truncate ${opt.className} ${optionCaptionFont === opt.value ? "text-[#9a4153]" : "text-[#1d1b1e]"}`}>
                       {opt.label}
                     </span>
                   </button>

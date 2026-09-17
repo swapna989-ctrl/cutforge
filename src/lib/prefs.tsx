@@ -1,12 +1,13 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import type { Ratio, CaptionStyle, CaptionLanguage, ClipLength } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionFont, CaptionLanguage, ClipLength } from "@/lib/pipeline";
 import { useAuth } from "@/lib/auth";
 
 export type Prefs = {
   defaultRatio: Ratio;
   defaultCaptionStyle: CaptionStyle;
+  defaultCaptionFont: CaptionFont;
   defaultCaptionLanguage: CaptionLanguage;
   defaultClipLength: ClipLength;
 };
@@ -14,13 +15,25 @@ export type Prefs = {
 const DEFAULT_PREFS: Prefs = {
   defaultRatio: "9:16",
   defaultCaptionStyle: "classic",
+  defaultCaptionFont: "geist",
   defaultCaptionLanguage: "auto",
   defaultClipLength: "auto",
 };
 
 const STORAGE_PREFIX = "flovura_prefs:";
 const VALID_RATIOS: Ratio[] = ["9:16", "16:9", "1:1"];
-const VALID_CAPTION_STYLES: CaptionStyle[] = ["classic", "bold_yellow", "rose"];
+const VALID_CAPTION_STYLES: CaptionStyle[] = ["classic", "bold_yellow", "rose", "glow", "punch", "minimalist", "vlog"];
+const VALID_CAPTION_FONTS: CaptionFont[] = [
+  "geist",
+  "montserrat",
+  "poppins",
+  "fredoka",
+  "pt_serif",
+  "roboto",
+  "ubuntu",
+  "zalando_sans",
+  "cormorant_garamond",
+];
 const VALID_CAPTION_LANGUAGES: CaptionLanguage[] = ["auto", "hinglish"];
 const VALID_CLIP_LENGTHS: ClipLength[] = ["auto", "short", "long"];
 
@@ -33,6 +46,10 @@ function sanitize(raw: unknown): Prefs {
       typeof r.defaultCaptionStyle === "string" && VALID_CAPTION_STYLES.includes(r.defaultCaptionStyle as CaptionStyle)
         ? (r.defaultCaptionStyle as CaptionStyle)
         : DEFAULT_PREFS.defaultCaptionStyle,
+    defaultCaptionFont:
+      typeof r.defaultCaptionFont === "string" && VALID_CAPTION_FONTS.includes(r.defaultCaptionFont as CaptionFont)
+        ? (r.defaultCaptionFont as CaptionFont)
+        : DEFAULT_PREFS.defaultCaptionFont,
     defaultCaptionLanguage:
       typeof r.defaultCaptionLanguage === "string" && VALID_CAPTION_LANGUAGES.includes(r.defaultCaptionLanguage as CaptionLanguage)
         ? (r.defaultCaptionLanguage as CaptionLanguage)

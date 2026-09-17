@@ -232,6 +232,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         name: files[0].name,
         ratio,
         captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
+        captionFont: prefsReady ? prefs.defaultCaptionFont : "geist",
         captionLanguage: prefsReady ? prefs.defaultCaptionLanguage : "auto",
         clipLength,
         pipelineStatus: "ingesting",

@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { env } from "./env.js";
-import type { CaptionStyle } from "./ffmpeg.js";
+import type { CaptionFont, CaptionStyle } from "./ffmpeg.js";
 import type { CaptionLanguage } from "./transcribe.js";
 import type { ClipLength } from "./clipPlanner.js";
 
@@ -28,6 +28,7 @@ export type ProjectRow = {
   error_message: string | null;
   watermark: boolean;
   caption_style: CaptionStyle;
+  caption_font: CaptionFont;
   caption_language: CaptionLanguage;
   clip_length: ClipLength;
 };

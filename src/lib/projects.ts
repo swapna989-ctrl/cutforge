@@ -1,11 +1,12 @@
 import { createClient } from "@/lib/supabase/client";
-import type { PipelineStatus, Ratio, CaptionStyle, CaptionLanguage, ClipLength } from "@/lib/pipeline";
+import type { PipelineStatus, Ratio, CaptionStyle, CaptionFont, CaptionLanguage, ClipLength } from "@/lib/pipeline";
 
 export type Project = {
   id: string;
   name: string;
   ratio: Ratio;
   captionStyle: CaptionStyle;
+  captionFont: CaptionFont;
   captionLanguage: CaptionLanguage;
   clipLength: ClipLength;
   pipelineStatus: PipelineStatus;
@@ -22,6 +23,7 @@ type ProjectRow = {
   name: string;
   ratio: string;
   caption_style: string;
+  caption_font: string;
   caption_language: string;
   clip_length: string;
   pipeline_status: string;
@@ -39,6 +41,7 @@ function mapRow(row: ProjectRow): Project {
     name: row.name,
     ratio: row.ratio as Ratio,
     captionStyle: row.caption_style as CaptionStyle,
+    captionFont: row.caption_font as CaptionFont,
     captionLanguage: row.caption_language as CaptionLanguage,
     clipLength: row.clip_length as ClipLength,
     pipelineStatus,
@@ -72,6 +75,9 @@ export async function createProject(input: {
   ratio: Ratio;
   /** Which caption preset the worker burns in — see worker/src/ffmpeg.ts's CAPTION_PRESETS. */
   captionStyle: CaptionStyle;
+  /** Which font family the worker burns in — an independent dimension from captionStyle, see
+   *  worker/src/ffmpeg.ts's FONT_DISPLAY_NAMES. */
+  captionFont: CaptionFont;
   /** Whether to bias transcription toward Romanized Hindi — see worker/src/transcribe.ts's
    *  HINGLISH_PROMPT_HINT. Best-effort, opt-in. */
   captionLanguage: CaptionLanguage;
@@ -101,6 +107,7 @@ export async function createProject(input: {
       name: input.name,
       ratio: input.ratio,
       caption_style: input.captionStyle,
+      caption_font: input.captionFont,
       caption_language: input.captionLanguage,
       clip_length: input.clipLength,
       pipeline_status: input.pipelineStatus,
@@ -123,6 +130,7 @@ export async function updateProject(
     ratio: Ratio;
     sourceKey: string;
     captionStyle: CaptionStyle;
+    captionFont: CaptionFont;
     captionLanguage: CaptionLanguage;
     clipLength: ClipLength;
   }>
@@ -134,6 +142,7 @@ export async function updateProject(
   if (patch.ratio !== undefined) update.ratio = patch.ratio;
   if (patch.sourceKey !== undefined) update.source_key = patch.sourceKey;
   if (patch.captionStyle !== undefined) update.caption_style = patch.captionStyle;
+  if (patch.captionFont !== undefined) update.caption_font = patch.captionFont;
   if (patch.captionLanguage !== undefined) update.caption_language = patch.captionLanguage;
   if (patch.clipLength !== undefined) update.clip_length = patch.clipLength;
   const { error } = await supabase.from("projects").update(update).eq("id", id);

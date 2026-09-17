@@ -348,9 +348,36 @@ const WATERMARK_PNG = join(ASSETS_DIR, "watermark.png");
 // glyphs with, headless Linux containers commonly ship none at all, and libass fails that
 // silently — no error, just nothing drawn. FontName=Arial only ever worked in local testing
 // because Windows happens to have Arial installed system-wide, which masked the gap entirely.
-// Bundling a real font (Geist, Vercel's OFL-licensed font already vendored by Next.js) and
-// pointing `fontsdir` at it removes the dependency on whatever fonts a given host has.
-const FONT_NAME = "Geist";
+// Bundling real fonts and pointing `fontsdir` at them removes the dependency on whatever fonts a
+// given host has.
+export type CaptionFont =
+  | "geist"
+  | "montserrat"
+  | "poppins"
+  | "fredoka"
+  | "pt_serif"
+  | "roboto"
+  | "ubuntu"
+  | "zalando_sans"
+  | "cormorant_garamond";
+
+// Each value is the font's own real family name, verified from its bundled file's name table
+// (not assumed from the filename) — this is what has to appear as the ASS style line's
+// Fontname for libass to actually find and use that file via fontsdir. Geist stays the default
+// (Vercel's OFL-licensed font already vendored by Next.js); the other eight are Google Fonts,
+// each fetched and verified the same way Noto Sans Devanagari was (real static Regular instance,
+// SIL Open Font License or equivalent).
+const FONT_DISPLAY_NAMES: Record<CaptionFont, string> = {
+  geist: "Geist",
+  montserrat: "Montserrat",
+  poppins: "Poppins",
+  fredoka: "Fredoka",
+  pt_serif: "PT Serif",
+  roboto: "Roboto",
+  ubuntu: "Ubuntu",
+  zalando_sans: "Zalando Sans",
+  cormorant_garamond: "Cormorant Garamond",
+};
 
 // Geist only covers Latin script — a real production failure for Hindi source video confirmed
 // this: libass has zero Devanagari glyphs to draw with, so it silently renders nothing for that
@@ -376,11 +403,16 @@ function escapeFfmpegPath(p: string): string {
   return `'${p.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
 }
 
-export type CaptionStyle = "classic" | "bold_yellow" | "rose";
+export type CaptionStyle = "classic" | "bold_yellow" | "rose" | "glow" | "punch" | "minimalist" | "vlog";
 
 type CaptionPresetSpec = {
   fontSize: number;
   bold: boolean;
+  italic: boolean;
+  /** Transforms caption text to upper-case before rendering — a per-style choice (Vlog stays
+   *  sentence-case for its editorial look), not a global one. A no-op on Devanagari text, since
+   *  JS's toUpperCase() only maps characters that actually have a case distinction. */
+  uppercase: boolean;
   /** ASS color format is &HAABBGGRR — reversed byte order from a normal #RRGGBB hex string. */
   primaryColor: string;
   outlineColor: string;
@@ -391,35 +423,109 @@ type CaptionPresetSpec = {
    * `classic` preset for anyone who prefers the plain look).
    */
   highlightColor: string | null;
+  /**
+   * Renders a second, blurred copy of each event UNDERNEATH the normal crisp one (see
+   * buildAssDocument) — a real, confirmed-by-render requirement: applying `\blur` directly to
+   * the crisp text's own (legible-width) outline just softens it into a slightly fuzzy blob, not
+   * a halo, and cranking that outline width up to get a visible blur first makes the letters melt
+   * into each other well before the blur reads as a glow. Two independent layers is the standard
+   * technique instead — a heavily blurred, much wider `\bord` override (`\3c` recolors just that
+   * copy's outline, independent of this style's own OutlineColour, which the crisp copy on top
+   * keeps using unmodified) bleeds outward as a soft glow *around* the still-crisp text, rather
+   * than replacing it. Undefined means no halo, i.e. today's single-copy rendering.
+   */
+  glow?: { haloBorder: number; haloBlur: number; haloColor: string };
+  /** Hardcodes this preset's font regardless of the separately-chosen CaptionFont — only Vlog
+   *  uses this, for its serif look, same "this one thing always overrides" pattern already used
+   *  for Devanagari font-switching. */
+  fontOverride?: string;
 };
 
 // Named bundles, not raw sliders — chosen after looking at how vugolaai.com's own caption
 // editor actually splits this up (Presets tab vs. a separate Font/Effects tab): a preset picker
 // covers the common case, without us needing to expose every individual knob yet.
+// fontSize is in ASS's own units, which map 1:1 onto pixels of the real output frame (PlayResY
+// is set to the true output height in buildAssDocument) — 20-22 against a 1280-tall vertical
+// short was only ~1.6% of frame height, nowhere near the large, easy-to-read-at-a-glance text
+// every reference short-form caption style (viral captions generally) actually uses. Bumped to
+// roughly 5% of a 1280-tall frame, with outlineWidth scaled to keep the same stroke-to-text-size
+// ratio each style had before, not just a thicker-looking outline relative to the new size.
 const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
   classic: {
-    fontSize: 20,
+    fontSize: 64,
     bold: false,
+    italic: false,
+    uppercase: false,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 5,
+    outlineWidth: 14,
     highlightColor: null,
   },
   bold_yellow: {
-    fontSize: 22,
+    fontSize: 68,
     bold: true,
+    italic: false,
+    uppercase: false,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 6,
+    outlineWidth: 16,
     highlightColor: "&H0000FFFF", // yellow — the current word "pops" mid-sentence
   },
   rose: {
-    fontSize: 22,
+    fontSize: 68,
     bold: true,
+    italic: false,
+    uppercase: false,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black
-    outlineWidth: 6,
+    outlineWidth: 16,
     highlightColor: "&H009583ED", // Flovura's own rose accent (#ed8395), converted to ASS BGR
+  },
+  glow: {
+    fontSize: 68,
+    bold: true,
+    italic: false,
+    uppercase: true,
+    primaryColor: "&H00FFFFFF", // white
+    outlineColor: "&H00000000", // black — the crisp copy's own thin outline, for legibility
+    outlineWidth: 4,
+    highlightColor: null,
+    // Verified by real render/frame-extraction: a wide, heavily blurred white halo behind a
+    // crisp black-outlined copy reads as an actual glow; anything blurring the crisp outline
+    // itself either stayed a fuzzy blob (thin outline) or melted adjacent letters/words together
+    // well before the blur looked like a glow (thick outline) — see CaptionPresetSpec.glow.
+    glow: { haloBorder: 24, haloBlur: 6, haloColor: "&HFFFFFF&" },
+  },
+  punch: {
+    fontSize: 68,
+    bold: true,
+    italic: false,
+    uppercase: true,
+    primaryColor: "&H00FFFFFF", // white
+    outlineColor: "&H00000000", // black
+    outlineWidth: 16,
+    highlightColor: "&H009583ED", // Flovura's own rose accent — same highlight mechanic as `rose`
+  },
+  minimalist: {
+    fontSize: 60,
+    bold: false,
+    italic: false,
+    uppercase: false,
+    primaryColor: "&H00FFFFFF", // white
+    outlineColor: "&H00000000", // black
+    outlineWidth: 8, // thinner than classic's 14 — a quieter, lighter-weight look
+    highlightColor: null,
+  },
+  vlog: {
+    fontSize: 64,
+    bold: false,
+    italic: true,
+    uppercase: false,
+    primaryColor: "&H004BB8F0", // Flovura's own warm gold/amber accent (#F0B84B), converted to ASS BGR
+    outlineColor: "&H00000000", // black
+    outlineWidth: 12,
+    highlightColor: null,
+    fontOverride: "PT Serif", // the editorial/cinematic look needs a serif regardless of the chosen CaptionFont
   },
 };
 
@@ -453,21 +559,24 @@ function inlineColor(styleColor: string): string {
 /**
  * Renders one word, wrapping it in inline ASS override tags when it needs to differ from the
  * style line's own defaults — a `\fn` font switch when the word contains Devanagari (the style
- * line stays declared as Geist throughout; only the words that actually need it switch), a `\c`
- * color switch when it's the one word currently highlighted (see buildChunkEvents), or both at
- * once for a highlighted Devanagari word. Runs on every word unconditionally — including in the
- * `classic` (no-highlight) style — since the font problem exists independently of whether any
- * word is being color-highlighted.
+ * line stays declared as `baseFontName` throughout; only the words that actually need it switch),
+ * a `\c` color switch when it's the one word currently highlighted (see buildChunkEvents), or
+ * both at once for a highlighted Devanagari word. Runs on every word unconditionally — including
+ * in the `classic` (no-highlight) style — since the font problem exists independently of whether
+ * any word is being color-highlighted. `uppercase` is applied to the word's own text before
+ * Devanagari detection/escaping — a no-op on Devanagari either way, since toUpperCase() only maps
+ * characters with an actual case distinction.
  */
-function wordText(word: CaptionWordLike, highlightColor: string | null, baseColor: string): string {
-  const escaped = escapeAssText(word.text);
+function wordText(word: CaptionWordLike, highlightColor: string | null, baseColor: string, uppercase: boolean, baseFontName: string): string {
+  const rawText = uppercase ? word.text.toUpperCase() : word.text;
+  const escaped = escapeAssText(rawText);
   const devanagari = isDevanagari(word.text);
   if (!devanagari && !highlightColor) return escaped;
 
   const openTags = [devanagari ? `\\fn${FONT_NAME_DEVANAGARI}` : "", highlightColor ? `\\c${inlineColor(highlightColor)}` : ""]
     .filter(Boolean)
     .join("");
-  const closeTags = [devanagari ? `\\fn${FONT_NAME}` : "", highlightColor ? `\\c${inlineColor(baseColor)}` : ""].filter(Boolean).join("");
+  const closeTags = [devanagari ? `\\fn${baseFontName}` : "", highlightColor ? `\\c${inlineColor(baseColor)}` : ""].filter(Boolean).join("");
   return `{${openTags}}${escaped}{${closeTags}}`;
 }
 
@@ -475,10 +584,17 @@ function wordText(word: CaptionWordLike, highlightColor: string | null, baseColo
  *  is the one word (if any) that should get the highlight color — plain/classic rendering passes
  *  null, meaning no word gets `highlightColor`, but every word still runs through wordText so a
  *  Devanagari font switch still applies. */
-function plainChunkText(chunk: CaptionChunk, highlightIndex: number | null, highlightColor: string | null, baseColor: string): string {
+function plainChunkText(
+  chunk: CaptionChunk,
+  highlightIndex: number | null,
+  highlightColor: string | null,
+  baseColor: string,
+  uppercase: boolean,
+  baseFontName: string
+): string {
   const parts: string[] = [];
   chunk.words.forEach((word, i) => {
-    parts.push(wordText(word, i === highlightIndex ? highlightColor : null, baseColor));
+    parts.push(wordText(word, i === highlightIndex ? highlightColor : null, baseColor, uppercase, baseFontName));
     if (i === chunk.lineBreakAfterIndex) parts.push("\\N");
     else if (i < chunk.words.length - 1) parts.push(" ");
   });
@@ -498,15 +614,21 @@ function plainChunkText(chunk: CaptionChunk, highlightIndex: number | null, high
  * *next* word's event (its start is the previous word's end) so there's no dead air with nothing
  * highlighted. Returns a single event for the whole chunk when there's no highlight color at all.
  */
-function buildChunkEvents(chunk: CaptionChunk, highlightColor: string | null, baseColor: string): { start: number; end: number; text: string }[] {
+function buildChunkEvents(
+  chunk: CaptionChunk,
+  highlightColor: string | null,
+  baseColor: string,
+  uppercase: boolean,
+  baseFontName: string
+): { start: number; end: number; text: string }[] {
   if (!highlightColor) {
-    return [{ start: chunk.start, end: chunk.end, text: plainChunkText(chunk, null, null, baseColor) }];
+    return [{ start: chunk.start, end: chunk.end, text: plainChunkText(chunk, null, null, baseColor, uppercase, baseFontName) }];
   }
 
   let cumulative = chunk.start;
 
   return chunk.words.map((word, i) => {
-    const text = plainChunkText(chunk, i, highlightColor, baseColor);
+    const text = plainChunkText(chunk, i, highlightColor, baseColor, uppercase, baseFontName);
     const event = { start: cumulative, end: word.end, text };
     cumulative = word.end;
     return event;
@@ -522,8 +644,11 @@ function buildChunkEvents(chunk: CaptionChunk, highlightColor: string | null, ba
  * the real frame, removes that ambiguity: every pixel value in the style below maps 1:1 onto the
  * actual output.
  */
-function buildAssDocument(chunks: CaptionChunk[], style: CaptionStyle, width: number, height: number, marginV: number): string {
+function buildAssDocument(chunks: CaptionChunk[], style: CaptionStyle, font: CaptionFont, width: number, height: number, marginV: number): string {
   const preset = CAPTION_PRESETS[style];
+  // A preset's own fontOverride (only Vlog has one) wins regardless of the separately-chosen
+  // CaptionFont — same "this one thing always overrides" pattern as the Devanagari font switch.
+  const baseFontName = preset.fontOverride ?? FONT_DISPLAY_NAMES[font];
 
   // BorderStyle=1 is libass's "outline" style (as opposed to 3, "opaque box") — Outline is then
   // the stroke width in pixels and OutlineColour the stroke's own color, fully opaque so it reads
@@ -533,16 +658,16 @@ function buildAssDocument(chunks: CaptionChunk[], style: CaptionStyle, width: nu
   // is done with inline \c overrides on individual events instead, not this style's own colors.
   const styleLine = [
     "Default",
-    FONT_NAME,
+    baseFontName,
     String(preset.fontSize),
     preset.primaryColor,
     preset.primaryColor,
     preset.outlineColor,
     "&H00000000", // BackColour: unused (only applies to BorderStyle 3's box fill)
     preset.bold ? "-1" : "0",
+    preset.italic ? "-1" : "0",
     "0",
-    "0",
-    "0", // Italic, Underline, StrikeOut
+    "0", // Underline, StrikeOut
     "100",
     "100",
     "0",
@@ -557,9 +682,22 @@ function buildAssDocument(chunks: CaptionChunk[], style: CaptionStyle, width: nu
     "1", // Encoding
   ].join(",");
 
+  // Layer is a real painter's-order field, not just an id — ASS/libass draws lower Layer values
+  // first, so the halo copy (Layer 0) paints underneath and the crisp copy (Layer 1) paints over
+  // it. \3c/\bord/\blur are inline override tags, not style-line fields, so they're prefixed onto
+  // the halo copy's own text only — the crisp copy keeps the style line's own (small, legible)
+  // OutlineColour/Outline untouched. See CaptionPresetSpec.glow for why this needs two events per
+  // chunk-event rather than one blurred copy.
+  const glow = preset.glow;
   const events = chunks
-    .flatMap((c) => buildChunkEvents(c, preset.highlightColor, preset.primaryColor))
-    .map((e) => `Dialogue: 0,${toAssTime(e.start)},${toAssTime(e.end)},Default,,0,0,0,,${e.text}`)
+    .flatMap((c) => buildChunkEvents(c, preset.highlightColor, preset.primaryColor, preset.uppercase, baseFontName))
+    .flatMap((e) => {
+      const start = toAssTime(e.start);
+      const end = toAssTime(e.end);
+      if (!glow) return [`Dialogue: 0,${start},${end},Default,,0,0,0,,${e.text}`];
+      const haloTag = `{\\3c${glow.haloColor}\\bord${glow.haloBorder}\\blur${glow.haloBlur}}`;
+      return [`Dialogue: 0,${start},${end},Default,,0,0,0,,${haloTag}${e.text}`, `Dialogue: 1,${start},${end},Default,,0,0,0,,${e.text}`];
+    })
     .join("\n");
 
   return `[Script Info]
@@ -592,6 +730,7 @@ export async function finalizeVideo(
   inputPath: string,
   chunks: CaptionChunk[],
   captionStyle: CaptionStyle,
+  captionFont: CaptionFont,
   watermark: boolean,
   outputWidth: number,
   outputHeight: number,
@@ -599,7 +738,7 @@ export async function finalizeVideo(
   assPath: string
 ): Promise<void> {
   const marginV = Math.round(outputHeight * 0.1);
-  await writeFile(assPath, buildAssDocument(chunks, captionStyle, outputWidth, outputHeight, marginV), "utf-8");
+  await writeFile(assPath, buildAssDocument(chunks, captionStyle, captionFont, outputWidth, outputHeight, marginV), "utf-8");
 
   const escapedAssPath = escapeFfmpegPath(assPath);
   const subtitlesFilter = `subtitles=${escapedAssPath}:fontsdir=${escapedFontsDir}`;

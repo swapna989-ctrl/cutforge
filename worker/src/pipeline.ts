@@ -191,6 +191,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
           clipCroppedPath,
           captionChunks,
           job.caption_style,
+          job.caption_font,
           job.watermark,
           clipDimensions.width,
           clipDimensions.height,
