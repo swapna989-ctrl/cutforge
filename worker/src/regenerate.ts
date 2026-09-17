@@ -13,7 +13,7 @@ import {
   multiClipTargetDimensions,
   getVideoDimensions,
 } from "./ffmpeg.js";
-import { transcribeCaptions } from "./transcribe.js";
+import { transcribeCaptions, type CaptionChunk } from "./transcribe.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
 import { getProject, updateShort, chargeShortRegenerateCredit, type ShortRow } from "./supabase.js";
 
@@ -75,8 +75,13 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
         : await detectFaceCenterFraction(clipPath, short.source_end_seconds - short.source_start_seconds);
     await normalizeToTargetResolution(clipPath, clipCroppedPath, target.width, target.height, faceCenter);
 
-    await extractAudio(clipCroppedPath, clipAudioPath);
-    const captionChunks = await transcribeCaptions(clipAudioPath, captionLanguage, captionLineCount);
+    // Skips the real Whisper call entirely for "none" — same real-cost-avoidance reasoning as
+    // pipeline.ts's own per-short loop.
+    let captionChunks: CaptionChunk[] = [];
+    if (captionStyle !== "none") {
+      await extractAudio(clipCroppedPath, clipAudioPath);
+      captionChunks = await transcribeCaptions(clipAudioPath, captionLanguage, captionLineCount);
+    }
     const clipDimensions = await getVideoDimensions(clipCroppedPath);
     await finalizeVideo(
       clipCroppedPath,

@@ -43,7 +43,9 @@ export const CAPTION_STYLE_OPTIONS: {
   uppercase?: boolean;
   textColor?: string;
   glow?: boolean;
+  noCaptions?: boolean;
 }[] = [
+  { value: "none", label: "No captions", highlight: null, bold: false, noCaptions: true },
   { value: "classic", label: "Classic", highlight: null, bold: false },
   { value: "bold_yellow", label: "Bold Yellow", highlight: "#FFFF00", bold: true },
   { value: "rose", label: "Rose", highlight: "#ed8395", bold: true },
@@ -74,6 +76,7 @@ export function CaptionPreview({
   uppercase = true,
   textColor = "#fff",
   glow = false,
+  noCaptions = false,
 }: {
   highlight: string | null;
   bold: boolean;
@@ -81,7 +84,16 @@ export function CaptionPreview({
   uppercase?: boolean;
   textColor?: string;
   glow?: boolean;
+  noCaptions?: boolean;
 }) {
+  if (noCaptions) {
+    return (
+      <div className="rounded-lg bg-[#1a1a1a] px-2 py-3 flex items-center justify-center leading-tight">
+        <span className="material-symbols-outlined text-[#7B7579] text-[20px]">subtitles_off</span>
+      </div>
+    );
+  }
+
   const strokeStyle = {
     WebkitTextStroke: glow ? "0" : "2px black",
     paintOrder: "stroke fill",

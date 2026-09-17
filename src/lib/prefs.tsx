@@ -26,7 +26,7 @@ const DEFAULT_PREFS: Prefs = {
 
 const STORAGE_PREFIX = "flovura_prefs:";
 const VALID_RATIOS: Ratio[] = ["9:16", "16:9", "1:1"];
-const VALID_CAPTION_STYLES: CaptionStyle[] = ["classic", "bold_yellow", "rose", "glow", "punch", "minimalist", "vlog"];
+const VALID_CAPTION_STYLES: CaptionStyle[] = ["none", "classic", "bold_yellow", "rose", "glow", "punch", "minimalist", "vlog"];
 const VALID_CAPTION_FONTS: CaptionFont[] = [
   "geist",
   "montserrat",

@@ -282,6 +282,7 @@ function EditShortPageInner() {
                             uppercase={opt.uppercase}
                             textColor={opt.textColor}
                             glow={opt.glow}
+                            noCaptions={opt.noCaptions}
                           />
                           <span
                             className={`block text-center text-[11px] mt-1.5 ${

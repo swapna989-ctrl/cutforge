@@ -17,7 +17,7 @@ import {
   multiClipTargetDimensions,
   concatClips,
 } from "./ffmpeg.js";
-import { transcribeCaptions, transcribeSegments } from "./transcribe.js";
+import { transcribeCaptions, transcribeSegments, type CaptionChunk } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
 import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, type ProjectRow } from "./supabase.js";
@@ -192,8 +192,13 @@ export async function processJob(job: ProjectRow): Promise<void> {
         const faceCenter = await detectFaceCenterFraction(clipPath, candidate.endTime - candidate.startTime);
         await normalizeToTargetResolution(clipPath, clipCroppedPath, target.width, target.height, faceCenter);
 
-        await extractAudio(clipCroppedPath, clipAudioPath);
-        const captionChunks = await transcribeCaptions(clipAudioPath, job.caption_language, job.caption_line_count);
+        // Skips the real Whisper call entirely for "none" — nothing will be burned in, so paying
+        // for a transcription no render step will ever read would be pure waste.
+        let captionChunks: CaptionChunk[] = [];
+        if (job.caption_style !== "none") {
+          await extractAudio(clipCroppedPath, clipAudioPath);
+          captionChunks = await transcribeCaptions(clipAudioPath, job.caption_language, job.caption_line_count);
+        }
         const clipDimensions = await getVideoDimensions(clipCroppedPath);
         await finalizeVideo(
           clipCroppedPath,

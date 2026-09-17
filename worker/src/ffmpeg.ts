@@ -403,7 +403,11 @@ function escapeFfmpegPath(p: string): string {
   return `'${p.replace(/\\/g, "/").replace(/:/g, "\\:")}'`;
 }
 
-export type CaptionStyle = "classic" | "bold_yellow" | "rose" | "glow" | "punch" | "minimalist" | "vlog";
+// "none" burns in no captions at all — for users who'll caption elsewhere or don't want captions.
+// Deliberately excluded from CAPTION_PRESETS/BurnedCaptionStyle below: it never reaches a preset
+// lookup at all, since buildAssDocument/finalizeVideo both branch on it before ever needing one.
+export type CaptionStyle = "none" | "classic" | "bold_yellow" | "rose" | "glow" | "punch" | "minimalist" | "vlog";
+type BurnedCaptionStyle = Exclude<CaptionStyle, "none">;
 
 export type CaptionPosition = "auto" | "top" | "middle" | "bottom";
 
@@ -474,7 +478,7 @@ type CaptionPresetSpec = {
 // reference screenshot showing clean, non-merged per-letter outlines. 4px reads clearly at every
 // fontSize in this table without merging; thinner presets (minimalist/vlog) go a little thinner
 // still, matching their own quieter/lighter-weight intent.
-const CAPTION_PRESETS: Record<CaptionStyle, CaptionPresetSpec> = {
+const CAPTION_PRESETS: Record<BurnedCaptionStyle, CaptionPresetSpec> = {
   classic: {
     fontSize: 64,
     bold: false,
@@ -672,7 +676,7 @@ function buildChunkEvents(
  */
 function buildAssDocument(
   chunks: CaptionChunk[],
-  style: CaptionStyle,
+  style: BurnedCaptionStyle,
   font: CaptionFont,
   position: CaptionPosition,
   width: number,
@@ -756,12 +760,15 @@ ${events}
 /**
  * Burns in captions and, for free-tier exports, a watermark — this is the actual enforcement
  * of the paywall on the real file, not just a UI preview. `watermark` is decided once, at
- * upload time, from the user's billing status then (see projects.watermark).
+ * upload time, from the user's billing status then (see projects.watermark). Watermarking is
+ * independent of captioning — `captionStyle: "none"` still gets watermarked exactly like any
+ * other style, since the two are unrelated concerns (one's a caption preference, the other's a
+ * paywall enforcement).
  *
  * `outputWidth`/`outputHeight` are the real dimensions of `inputPath` (see getVideoDimensions) —
  * see buildAssDocument for why they matter. `assPath` is just a scratch file this writes to and
  * points ffmpeg's subtitles filter at — callers own tmpDir cleanup, same as every other
- * intermediate file in the pipeline.
+ * intermediate file in the pipeline. Unused (never even created) when captionStyle is "none".
  */
 export async function finalizeVideo(
   inputPath: string,
@@ -775,12 +782,25 @@ export async function finalizeVideo(
   outputPath: string,
   assPath: string
 ): Promise<void> {
+  const command = ffmpeg(inputPath).inputOptions(DECODE_OPTS);
+
+  if (captionStyle === "none") {
+    if (!watermark) {
+      return runFfmpeg(command.outputOptions(["-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]), outputPath);
+    }
+    return runFfmpeg(
+      command
+        .input(WATERMARK_PNG)
+        .complexFilter(["[0:v][1:v]overlay=W-w-24:H-h-24[out]"], "out")
+        .outputOptions(["-map", "0:a", "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]),
+      outputPath
+    );
+  }
+
   await writeFile(assPath, buildAssDocument(chunks, captionStyle, captionFont, captionPosition, outputWidth, outputHeight), "utf-8");
 
   const escapedAssPath = escapeFfmpegPath(assPath);
   const subtitlesFilter = `subtitles=${escapedAssPath}:fontsdir=${escapedFontsDir}`;
-
-  const command = ffmpeg(inputPath).inputOptions(DECODE_OPTS);
 
   if (!watermark) {
     return runFfmpeg(

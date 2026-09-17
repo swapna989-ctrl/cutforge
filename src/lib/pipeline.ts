@@ -1,7 +1,8 @@
 export type PipelineStatus = "idle" | "ingesting" | "queued" | "synthesizing" | "ready" | "failed";
 export type Ratio = "9:16" | "16:9" | "1:1";
 // Mirrors CAPTION_PRESETS in worker/src/ffmpeg.ts, which is what actually renders each style.
-export type CaptionStyle = "classic" | "bold_yellow" | "rose" | "glow" | "punch" | "minimalist" | "vlog";
+// "none" burns in no captions at all — for users who'll caption elsewhere or don't want captions.
+export type CaptionStyle = "none" | "classic" | "bold_yellow" | "rose" | "glow" | "punch" | "minimalist" | "vlog";
 // Mirrors FONT_DISPLAY_NAMES in worker/src/ffmpeg.ts, which is what actually renders each font —
 // an independent dimension from CaptionStyle (picking a preset doesn't change the font, except
 // where a preset hardcodes one via fontOverride, which today only "vlog" does).
