@@ -353,6 +353,17 @@ const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets")
 // `overlay` filter used to composite this image is present in essentially every ffmpeg build.
 const WATERMARK_PNG = join(ASSETS_DIR, "watermark.png");
 
+// Centered horizontally rather than in a corner: a corner mark can be cropped off by trimming
+// a thin strip from just one edge and rescaling, which barely touches the rest of the frame —
+// confirmed as a real, cheap way to defeat it. A centered mark can't be removed that way without
+// cropping symmetrically through the middle of the shot. Vertically it sits on whichever edge the
+// captions AREN'T using (see CAPTION_POSITION_SPECS), so the two never overlap; a top mark also
+// sits right where this product's face-cropped vertical video keeps its subject's head, making a
+// crop that removes it a crop that removes the subject too.
+function watermarkOverlayPosition(captionPosition: CaptionPosition): string {
+  return captionPosition === "top" ? "(W-w)/2:H-h-48" : "(W-w)/2:48";
+}
+
 // The subtitles filter "working" (no error, real segments transcribed) but rendering zero
 // visible text was a second real production failure: libass needs an actual font file to draw
 // glyphs with, headless Linux containers commonly ship none at all, and libass fails that
@@ -801,7 +812,7 @@ export async function finalizeVideo(
     return runFfmpeg(
       command
         .input(WATERMARK_PNG)
-        .complexFilter(["[0:v][1:v]overlay=W-w-24:H-h-24[out]"], "out")
+        .complexFilter([`[0:v][1:v]overlay=${watermarkOverlayPosition(captionPosition)}[out]`], "out")
         .outputOptions(["-map", "0:a", "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]),
       outputPath
     );
@@ -825,7 +836,10 @@ export async function finalizeVideo(
   return runFfmpeg(
     command
       .input(WATERMARK_PNG)
-      .complexFilter([`[0:v]${subtitlesFilter}[captioned]`, "[captioned][1:v]overlay=W-w-24:H-h-24[out]"], "out")
+      .complexFilter(
+        [`[0:v]${subtitlesFilter}[captioned]`, `[captioned][1:v]overlay=${watermarkOverlayPosition(captionPosition)}[out]`],
+        "out"
+      )
       .outputOptions(["-map", "0:a", "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "copy"]),
     outputPath
   );

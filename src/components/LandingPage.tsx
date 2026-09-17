@@ -54,7 +54,7 @@ const FAQS = [
   },
   {
     q: "Is there a free tier?",
-    a: "Yes — 5 free credits when you sign up, no card required.",
+    a: "Yes — 1 free credit when you sign up, no card required.",
   },
   {
     q: "Can I cancel anytime?",
@@ -143,7 +143,7 @@ export default function LandingPage() {
                 Already have an account?
               </Link>
             </div>
-            <p className="text-xs text-[#B3ACA6] mt-4">5 free credits to start · no card required</p>
+            <p className="text-xs text-[#B3ACA6] mt-4">1 free credit to start · no card required</p>
           </div>
 
           {/* Abstract "one long video -> three vertical shorts" illustration — not a screenshot of
@@ -298,7 +298,7 @@ export default function LandingPage() {
             <h2 className={`${playfair.className} text-2xl sm:text-3xl font-semibold text-[#1d1b1e] tracking-tight mb-3`}>
               Ship your next short today
             </h2>
-            <p className="text-sm text-[#7B7579] mb-7">5 free credits, no card required.</p>
+            <p className="text-sm text-[#7B7579] mb-7">1 free credit, no card required.</p>
             <Link
               href="/signup"
               className="inline-flex items-center gap-2 py-3 px-7 rounded-full bg-[#ed8395] text-white font-semibold text-sm shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 active:scale-[0.98]"

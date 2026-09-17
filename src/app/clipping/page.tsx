@@ -23,7 +23,7 @@ const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], 
 // The real signup grant every new account gets (supabase/migrations/0002_billing.sql) — the
 // only fixed "total" that actually exists for credits. Paid packs (10/30/100) have no fixed
 // total to compare against, so "X of Y" only means something for the free-tier count.
-const FREE_CREDITS_GRANT = 5;
+const FREE_CREDITS_GRANT = 1;
 
 export default function ClippingPage() {
   const { ready, user } = useRequireAuth();
