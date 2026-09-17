@@ -10,7 +10,7 @@ import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 import { creditsForDuration } from "@/lib/pricing";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
-import { listProjects, createProject, createProjectClip, updateProject, deleteProject, type Project } from "@/lib/projects";
+import { listProjects, createProject, createProjectClip, type Project } from "@/lib/projects";
 import type { Ratio, CaptionStyle, CaptionFont, CaptionLanguage, ClipLength } from "@/lib/pipeline";
 
 // A project sits in one of these while the worker is actively on it — used to decide whether
@@ -121,16 +121,19 @@ export default function ClippingPage() {
 
   // The "configure, then generate" step — appears once a link's been submitted or a file's been
   // picked, before either actually gets queued for the worker. `pending` is null when this panel
-  // isn't showing at all (the plain input bar, today's only state). For files, uploading starts
-  // immediately in the background (no reason to make someone wait idle to see the panel) and
-  // `projectId`/`creditsEstimate` fill in once that finishes; for URLs there's nothing to upload,
-  // so the panel is ready to generate from the moment it opens.
+  // isn't showing at all (the plain input bar, today's only state). For files, uploading to R2
+  // starts immediately in the background (no reason to make someone wait idle to see the panel)
+  // and `files`/`creditsEstimate` fill in once that finishes; for URLs there's nothing to upload,
+  // so the panel is ready to generate from the moment it opens. Deliberately NOT a project row
+  // yet, for either kind — nothing is created (so nothing shows up in "All Projects" below) until
+  // Generate actually fires (see handleGenerate); a real upload finishing early doesn't mean the
+  // user has committed to it, only that it's ready whenever they do.
   const [pending, setPending] = useState<{
     kind: "file" | "url";
     label: string;
-    projectId: string | null;
     creditsEstimate: number | null;
     uploadDone: boolean;
+    files: { sourceKey: string; fileName: string; duration: number | null }[];
   } | null>(null);
   const [optionRatio, setOptionRatio] = useState<Ratio>("9:16");
   const [optionCaptionStyle, setOptionCaptionStyle] = useState<CaptionStyle>("classic");
@@ -195,11 +198,11 @@ export default function ClippingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- billing is a fresh object every render; only loadState/hasInProgress should restart this interval
   }, [loadState, hasInProgress]);
 
-  /** Uploads every picked file for real (same R2 + project/project_clips flow WorkspaceView
-   *  uses), then hands off to the workspace's own review screen — landing there only once
-   *  there's something real to review, not as an empty intermediate page. Format/size/duration
-   *  are validated up front, before any upload starts, so a bad file never wastes bandwidth or
-   *  leaves a half-created project behind. */
+  /** Uploads every picked file to R2 for real, in the background, while the configure panel is
+   *  already open above — but deliberately creates no project/project_clips row yet (see
+   *  `pending`'s own comment). Generate is what actually calls createProject, once the user has
+   *  seen and confirmed their real options (see handleGenerate). Format/size/duration are
+   *  validated up front, before any upload starts, so a bad file never wastes bandwidth. */
   async function handleFilesPicked(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
@@ -268,50 +271,24 @@ export default function ClippingPage() {
     setPending({
       kind: "file",
       label: files.length === 1 ? files[0].name : `${files.length} files`,
-      projectId: null,
       creditsEstimate: creditsNeeded,
       uploadDone: false,
+      files: [],
     });
 
-    let createdProjectId: string | null = null;
-
     try {
-      const firstKey = await uploadClipToR2(files[0]);
-
-      // Starts as "ingesting" and STAYS there — unlike before, this is no longer flipped to
-      // "queued" automatically. That only happens once the user actually clicks "Generate" on
-      // the configure panel above, with whatever ratio/caption choices they landed on.
-      const created = await createProject({
-        name: files[0].name,
-        ratio: prefsReady ? prefs.defaultRatio : "9:16",
-        captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
-        captionFont: prefsReady ? prefs.defaultCaptionFont : "geist",
-        captionLanguage: prefsReady ? prefs.defaultCaptionLanguage : "auto",
-        clipLength: prefsReady ? prefs.defaultClipLength : "auto",
-        pipelineStatus: "ingesting",
-        progress: 0,
-        sourceKey: firstKey,
-        // Placeholder — the worker decides the real value once it charges for this project's
-        // actual duration (see charge_project_credits), which is also the moment it's certain
-        // whether that charge came from a paid source or a free one.
-        watermark: true,
-      });
-      createdProjectId = created.id;
-
-      await createProjectClip({ projectId: created.id, position: 0, sourceKey: firstKey, fileName: files[0].name, duration: durations[0] });
-
-      for (let i = 1; i < files.length; i++) {
+      const uploaded: { sourceKey: string; fileName: string; duration: number | null }[] = [];
+      for (let i = 0; i < files.length; i++) {
         const key = await uploadClipToR2(files[i]);
-        await createProjectClip({ projectId: created.id, position: i, sourceKey: key, fileName: files[i].name, duration: durations[i] });
+        uploaded.push({ sourceKey: key, fileName: files[i].name, duration: durations[i] });
       }
 
-      // Shows up in the list immediately as "ingesting" — same real-time feedback as before —
-      // while the configure panel stays open above it until Generate is clicked.
-      setProjects((prev) => [{ ...created, status: "draft" }, ...prev]);
-      setPending((prev) => (prev ? { ...prev, projectId: created.id, uploadDone: true } : prev));
+      // Nothing is created in the DB here — just the raw upload finishing. The configure panel
+      // (already open above) flips from "Uploading" to "Uploaded" off this same uploadDone flag;
+      // Generate is what actually calls createProject/createProjectClip (see handleGenerate).
+      setPending((prev) => (prev ? { ...prev, uploadDone: true, files: uploaded } : prev));
       setUploadingFiles(false);
     } catch (err) {
-      if (createdProjectId) deleteProject(createdProjectId).catch(() => {});
       setFileUploadError(err instanceof Error ? err.message : "Upload failed");
       setUploadingFiles(false);
       setPending(null);
@@ -346,7 +323,7 @@ export default function ClippingPage() {
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
-    setPending({ kind: "url", label: trimmed, projectId: null, creditsEstimate: null, uploadDone: true });
+    setPending({ kind: "url", label: trimmed, creditsEstimate: null, uploadDone: true, files: [] });
   }
 
   /** The actual hand-off to the worker, for either kind of pending submission — deliberately the
@@ -367,30 +344,31 @@ export default function ClippingPage() {
 
     try {
       if (pending.kind === "file") {
-        if (!pending.projectId) return; // Generate is disabled until this is set — guards a stray call.
-        await updateProject(pending.projectId, {
+        if (pending.files.length === 0) return; // Generate is disabled until uploadDone — guards a stray call.
+        const [first, ...rest] = pending.files;
+        // Created directly as "queued", never "ingesting" — by the time Generate is clickable the
+        // upload is already done (see the disabled condition below), so there's no draft-upload
+        // state left to represent; this is the moment the project starts existing at all.
+        const created = await createProject({
+          name: first.fileName,
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
           captionFont: optionCaptionFont,
           captionLanguage: optionCaptionLanguage,
           clipLength: optionClipLength,
           pipelineStatus: "queued",
+          progress: 0,
+          sourceKey: first.sourceKey,
+          // Placeholder — the worker decides the real value once it charges for this project's
+          // actual duration (see charge_project_credits), which is also the moment it's certain
+          // whether that charge came from a paid source or a free one.
+          watermark: true,
         });
-        setProjects((prev) =>
-          prev.map((p) =>
-            p.id === pending.projectId
-              ? {
-                  ...p,
-                  ratio: optionRatio,
-                  captionStyle: optionCaptionStyle,
-                  captionFont: optionCaptionFont,
-                  captionLanguage: optionCaptionLanguage,
-                  clipLength: optionClipLength,
-                  pipelineStatus: "queued",
-                }
-              : p
-          )
-        );
+        await createProjectClip({ projectId: created.id, position: 0, sourceKey: first.sourceKey, fileName: first.fileName, duration: first.duration });
+        for (let i = 0; i < rest.length; i++) {
+          await createProjectClip({ projectId: created.id, position: i + 1, sourceKey: rest[i].sourceKey, fileName: rest[i].fileName, duration: rest[i].duration });
+        }
+        setProjects((prev) => [{ ...created, status: "draft" }, ...prev]);
       } else {
         const created = await createProject({
           name: pending.label,
@@ -416,14 +394,12 @@ export default function ClippingPage() {
     }
   }
 
-  /** Backs out of the configure step without generating anything — for a file submission this
-   *  also deletes the ingesting draft (cascades its project_clips), same rollback path already
-   *  used for a real upload failure, so an abandoned draft doesn't linger as a phantom project. */
+  /** Backs out of the configure step without generating anything. No DB cleanup needed — a
+   *  project row is never created until Generate actually fires (see handleGenerate), so there's
+   *  nothing to roll back here, only the local `pending` state to clear. Any file already
+   *  uploaded to R2 is simply left there, unreferenced — same as it would be if the tab were
+   *  closed mid-upload. */
   function handleCancelPending() {
-    if (pending?.kind === "file" && pending.projectId) {
-      deleteProject(pending.projectId).catch(() => {});
-      setProjects((prev) => prev.filter((p) => p.id !== pending.projectId));
-    }
     setPending(null);
     setGenerateError(null);
   }
