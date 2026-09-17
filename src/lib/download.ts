@@ -29,8 +29,14 @@ export async function deliverDownload(downloadUrl: string, downloadWindow: Windo
       const file = new File([blob], filename, { type: "video/mp4" });
 
       if (navigator.canShare({ files: [file] })) {
-        downloadWindow?.close();
+        // Closed only once share() has actually resolved — closing it beforehand and then having
+        // share() fail (e.g. iOS treating the user-activation as expired after a slow multi-MB
+        // blob fetch, which throws something other than AbortError) left the fallback below
+        // trying to navigate an already-closed window, which throws, silently, with no visible
+        // outcome at all: confirmed as the real cause of a reported "glitches back to the same
+        // page, no share sheet" regression.
         await navigator.share({ files: [file] });
+        downloadWindow?.close();
         return;
       }
     } catch (err) {
@@ -40,11 +46,23 @@ export async function deliverDownload(downloadUrl: string, downloadWindow: Windo
         downloadWindow?.close();
         return;
       }
-      // Any other failure (blob fetch failed, canShare said no, share() itself rejected) falls
-      // through to the plain-navigation path below instead of leaving the user stuck.
+      // Any other failure (blob fetch failed, canShare said no, share() itself rejected — e.g.
+      // expired user-activation) falls through to the plain-navigation path below, on the same
+      // still-open popup, instead of leaving the user stuck with neither outcome.
     }
   }
 
-  if (downloadWindow) downloadWindow.location.href = downloadUrl;
-  else window.location.href = downloadUrl;
+  // Guarded rather than a plain `downloadWindow.location.href = ...`: the popup can be dead by
+  // now for reasons outside this function's control too (the user closed it while a slow blob
+  // fetch above was still running), and navigating a dead window throws — this always ends in a
+  // real navigation somewhere rather than a silent no-op.
+  try {
+    if (downloadWindow && !downloadWindow.closed) {
+      downloadWindow.location.href = downloadUrl;
+      return;
+    }
+  } catch {
+    // Falls through to the current-tab navigation below.
+  }
+  window.location.href = downloadUrl;
 }
