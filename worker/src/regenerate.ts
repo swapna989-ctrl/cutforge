@@ -2,12 +2,11 @@ import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import ffmpegPath from "ffmpeg-static";
 import { downloadToFile, uploadFromFile } from "./r2.js";
 import {
   extractClipRange,
   extractAudio,
+  extractFrame,
   finalizeVideo,
   normalizeToTargetResolution,
   multiClipTargetDimensions,
@@ -99,7 +98,24 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
     const shortOutputKey = `${project.user_id}/shorts/${randomUUID()}.mp4`;
     await uploadFromFile(clipFinalPath, shortOutputKey, "video/mp4");
 
-    await updateShort(short.id, { status: "ready", output_key: shortOutputKey, error_message: null });
+    // From the FINAL rendered output (captions/crop/watermark already applied), not the source —
+    // this should show exactly what the user will actually see, same reasoning as pipeline.ts's
+    // own per-short thumbnail step. A failure here shouldn't fail the whole regenerate, and
+    // deliberately doesn't touch thumbnail_key at all on failure (rather than nulling it out) —
+    // a short that already had a good thumbnail from an earlier render keeps it rather than
+    // losing it to an unrelated hiccup in this one extraction.
+    const patch: Parameters<typeof updateShort>[1] = { status: "ready", output_key: shortOutputKey, error_message: null };
+    try {
+      const thumbPath = join(tmpDir, "thumbnail.jpg");
+      await extractFrame(clipFinalPath, 1, thumbPath);
+      const thumbnailKey = `${project.user_id}/thumbnails/${randomUUID()}.jpg`;
+      await uploadFromFile(thumbPath, thumbnailKey, "image/jpeg");
+      patch.thumbnail_key = thumbnailKey;
+    } catch (err) {
+      console.error(`Thumbnail extraction failed for short ${short.id} (non-fatal):`, err);
+    }
+
+    await updateShort(short.id, patch);
   } catch (err) {
     console.error(`Regenerate failed for short ${short.id}:`, err);
     const detail = err instanceof Error ? err.message : String(err);
@@ -131,13 +147,7 @@ export async function extractPreviewFrame(short: ShortRow): Promise<void> {
 
     const midpoint = (short.source_start_seconds + short.source_end_seconds) / 2;
     const framePath = join(tmpDir, "preview.jpg");
-    await new Promise<void>((resolvePromise, reject) => {
-      const proc = spawn(ffmpegPath as string, ["-y", "-ss", String(midpoint), "-i", trimmedPath, "-frames:v", "1", framePath]);
-      let stderr = "";
-      proc.stderr.on("data", (d) => (stderr += d.toString()));
-      proc.on("close", (code) => (code === 0 ? resolvePromise() : reject(new Error(`ffmpeg exited ${code}\n${stderr.slice(-2000)}`))));
-      proc.on("error", reject);
-    });
+    await extractFrame(trimmedPath, midpoint, framePath);
 
     const previewKey = `${project.user_id}/preview/${randomUUID()}.jpg`;
     await uploadFromFile(framePath, previewKey, "image/jpeg");

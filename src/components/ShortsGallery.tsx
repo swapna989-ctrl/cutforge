@@ -57,6 +57,34 @@ function useShortVideoUrl(projectId: string, short: Short): string | null {
   return videoSrc;
 }
 
+/** Same lazy presigned-URL pattern as useShortVideoUrl, for the short's real thumbnail_key
+ *  instead — used as a <video poster> so a frame actually shows up immediately on every
+ *  platform, rather than depending on mobile Safari/WebKit to self-render one from
+ *  preload="metadata" alone (confirmed it doesn't: real thumbnails showed on desktop, stayed
+ *  blank on phone, for the exact same ready shorts). Returns null (no poster) for a short that
+ *  has no thumbnail yet — e.g. one rendered before this feature shipped, or a rare failed
+ *  extraction — the <video> element just falls back to its own default behavior in that case. */
+function useShortThumbnailUrl(projectId: string, short: Short): string | null {
+  const [thumbSrc, setThumbSrc] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    if (short.status !== "ready" || !short.thumbnailKey) return;
+    fetch(`/api/download-url?projectId=${projectId}&shortId=${short.id}&kind=thumbnail`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { downloadUrl: string } | null) => {
+        if (!cancelledRef.current && body?.downloadUrl) setThumbSrc(body.downloadUrl);
+      })
+      .catch(() => {});
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, [projectId, short.id, short.status, short.thumbnailKey]);
+
+  return thumbSrc;
+}
+
 async function downloadShort(projectId: string, shortId: string): Promise<void> {
   // Opened synchronously so Safari still treats the later redirect as user-initiated — same
   // technique WorkspaceView's own download button uses.
@@ -89,6 +117,7 @@ function ShortCard({
 }) {
   const isReady = short.status === "ready";
   const videoSrc = useShortVideoUrl(projectId, short);
+  const thumbSrc = useShortThumbnailUrl(projectId, short);
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -138,10 +167,16 @@ function ShortCard({
         {/* The video element starts loading as soon as videoSrc is known (so it's ready sooner),
             but stays hidden behind the placeholder until it actually has a real frame to show —
             a <video> with no poster renders a solid black frame while it's still buffering, which
-            otherwise flashes on top of this same light placeholder we just fixed the color of. */}
+            otherwise flashes on top of this same light placeholder we just fixed the color of.
+            `poster` is what actually fixes this reliably on mobile: a <video> with no poster
+            depends on the browser self-rendering a first frame from preload="metadata" alone,
+            which desktop browsers do but mobile Safari/WebKit (confirmed by the user: real
+            thumbnails on desktop, blank/spinner-forever on phone for the same ready shorts) does
+            not. */}
         {videoSrc && (
           <video
             src={videoSrc}
+            poster={thumbSrc ?? undefined}
             muted
             playsInline
             preload="metadata"
@@ -149,7 +184,7 @@ function ShortCard({
             className="w-full h-full object-cover"
           />
         )}
-        {(!videoSrc || !videoLoaded) && (
+        {!videoLoaded && !thumbSrc && (
           <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-[#FAF8F7]">
             {short.status === "failed" ? (
               <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">error_outline</span>
@@ -240,6 +275,7 @@ function ShortDetailModal({
 }) {
   const isReady = short.status === "ready";
   const videoSrc = useShortVideoUrl(projectId, short);
+  const thumbSrc = useShortThumbnailUrl(projectId, short);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -336,7 +372,7 @@ function ShortDetailModal({
 
           <div className="relative w-full aspect-[9/16] max-h-[50vh] rounded-2xl overflow-hidden bg-black mb-4">
             {videoSrc ? (
-              <video src={videoSrc} controls playsInline className="w-full h-full object-contain bg-black" />
+              <video src={videoSrc} poster={thumbSrc ?? undefined} controls playsInline className="w-full h-full object-contain bg-black" />
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 {short.status === "failed" ? (

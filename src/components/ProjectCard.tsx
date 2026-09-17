@@ -17,7 +17,8 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
   // video already being worked on before the user had even picked their options and hit Generate.
   const isIngesting = project.pipelineStatus === "ingesting";
 
-  const [thumbSrc, setThumbSrc] = useState<string | null>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [posterSrc, setPosterSrc] = useState<string | null>(null);
   const [shortsCount, setShortsCount] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -43,9 +44,22 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
           : `/api/download-url?projectId=${project.id}`;
 
         const res = await fetch(url);
-        if (!res.ok) return;
-        const body = (await res.json()) as { downloadUrl?: string };
-        if (!cancelledRef.current && body.downloadUrl) setThumbSrc(body.downloadUrl);
+        if (res.ok) {
+          const body = (await res.json()) as { downloadUrl?: string };
+          if (!cancelledRef.current && body.downloadUrl) setVideoSrc(body.downloadUrl);
+        }
+
+        // A real image frame from the short's own final render, used as this <video>'s poster —
+        // mobile Safari/WebKit doesn't reliably self-render a first frame from preload="metadata"
+        // alone (confirmed: real thumbnails on desktop, blank on phone, for the same ready
+        // projects), so this is what actually fixes that rather than depending on it.
+        if (firstReady?.thumbnailKey) {
+          const posterRes = await fetch(`/api/download-url?projectId=${project.id}&shortId=${firstReady.id}&kind=thumbnail`);
+          if (posterRes.ok) {
+            const posterBody = (await posterRes.json()) as { downloadUrl?: string };
+            if (!cancelledRef.current && posterBody.downloadUrl) setPosterSrc(posterBody.downloadUrl);
+          }
+        }
       })
       .catch(() => {});
 
@@ -82,8 +96,8 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
   const cardBody = (
     <>
       <div className="relative w-full aspect-video bg-[#FAF8F7]">
-        {thumbSrc ? (
-          <video src={thumbSrc} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+        {videoSrc ? (
+          <video src={videoSrc} poster={posterSrc ?? undefined} muted playsInline preload="metadata" className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2">
             {isIngesting && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">edit_note</span>}
@@ -94,7 +108,7 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
               </>
             )}
             {isFailed && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">error_outline</span>}
-            {isReady && !thumbSrc && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">movie</span>}
+            {isReady && !videoSrc && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">movie</span>}
           </div>
         )}
       </div>

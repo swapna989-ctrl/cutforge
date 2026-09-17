@@ -32,6 +32,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ downloadUrl });
   }
 
+  if (shortId && kind === "thumbnail") {
+    // Same RLS-scoped ownership check again, against thumbnail_key -- a real frame from the
+    // short's own final render, used as a <video poster> (see the migration adding this column
+    // for why: mobile Safari/WebKit doesn't reliably self-render a first frame on its own).
+    const { data: short, error } = await supabase
+      .from("shorts")
+      .select("thumbnail_key")
+      .eq("id", shortId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!short?.thumbnail_key) return NextResponse.json({ error: "No thumbnail yet" }, { status: 404 });
+    const downloadUrl = await getImagePreviewUrl(short.thumbnail_key);
+    return NextResponse.json({ downloadUrl });
+  }
+
   if (shortId) {
     // RLS (select_own_shorts, via a join to projects.user_id) already scopes this to the
     // caller's own row — no extra ownership check needed here.

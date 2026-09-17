@@ -335,6 +335,16 @@ export function extractAudio(inputPath: string, outputPath: string): Promise<voi
   );
 }
 
+/**
+ * Extracts one JPEG frame at `atSeconds` — shared by both the crop tool's uncropped-source
+ * preview and a short's own gallery thumbnail (see supabase.ts's thumbnail_key/preview_frame_key),
+ * so both go through the same tested extraction rather than two separate ffmpeg invocations that
+ * could quietly drift apart.
+ */
+export function extractFrame(inputPath: string, atSeconds: number, outputPath: string): Promise<void> {
+  return runFfmpeg(ffmpeg(inputPath).seekInput(Math.max(0, atSeconds)).outputOptions(["-frames:v", "1"]), outputPath);
+}
+
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
 // Pre-rendered rather than drawn at runtime via the `drawtext` filter: Railway's bundled Linux

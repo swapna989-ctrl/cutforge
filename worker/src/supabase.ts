@@ -151,6 +151,12 @@ export type ShortRow = {
   // show — '__pending__' is the sentinel the frontend writes to request one (see
   // claimNextPreviewFrame below).
   preview_frame_key: string | null;
+  // A real gallery-thumbnail frame from the short's own FINAL rendered output (captions/crop/
+  // watermark already applied) — mobile Safari/WebKit doesn't reliably self-render a <video>
+  // element's first frame from preload="metadata" alone, so the frontend uses this as a real
+  // <video poster> instead of relying on that. Set once per successful render; a failed
+  // extraction leaves this untouched rather than nulling out a still-good earlier thumbnail.
+  thumbnail_key: string | null;
 };
 
 /** Inserts one `pending` short row per planned candidate, in position order — done up front

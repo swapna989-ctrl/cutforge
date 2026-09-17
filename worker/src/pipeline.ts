@@ -11,6 +11,7 @@ import {
   cutSilences,
   extractAudio,
   extractClipRange,
+  extractFrame,
   finalizeVideo,
   normalizeResolution,
   normalizeToTargetResolution,
@@ -216,7 +217,23 @@ export async function processJob(job: ProjectRow): Promise<void> {
         const shortOutputKey = `${job.user_id}/shorts/${randomUUID()}.mp4`;
         await uploadFromFile(clipFinalPath, shortOutputKey, "video/mp4");
 
-        await updateShort(short.id, { status: "ready", output_key: shortOutputKey });
+        // From the FINAL rendered output (captions/crop/watermark already applied), not the
+        // source — this should show exactly what the user will actually see. Mobile Safari/
+        // WebKit doesn't reliably self-render a <video> element's first frame from
+        // preload="metadata" alone (confirmed: worked on desktop, stayed blank on phone), so the
+        // frontend uses this as a real <video poster> instead of relying on that. Non-fatal —
+        // a failed extraction just means no thumbnail yet, not a failed short.
+        let thumbnailKey: string | null = null;
+        try {
+          const thumbPath = join(tmpDir, `short-${i}-thumb.jpg`);
+          await extractFrame(clipFinalPath, 1, thumbPath);
+          thumbnailKey = `${job.user_id}/thumbnails/${randomUUID()}.jpg`;
+          await uploadFromFile(thumbPath, thumbnailKey, "image/jpeg");
+        } catch (err) {
+          console.error(`Thumbnail extraction failed for short ${short.id} (non-fatal):`, err);
+        }
+
+        await updateShort(short.id, { status: "ready", output_key: shortOutputKey, thumbnail_key: thumbnailKey });
         readyCount++;
       } catch (err) {
         console.error(`Short ${short.id} (project ${job.id}) failed:`, err);

@@ -297,6 +297,10 @@ export type Short = {
   cropY: number | null;
   /** Set once the worker has extracted an uncropped representative frame for the crop tool. */
   previewFrameKey: string | null;
+  /** A real gallery-thumbnail frame from the short's own FINAL rendered output — used as a real
+   *  <video poster> since mobile Safari/WebKit doesn't reliably self-render a first frame from
+   *  preload="metadata" alone (confirmed: worked on desktop, stayed blank on phone). */
+  thumbnailKey: string | null;
 };
 
 type ShortRow = {
@@ -321,6 +325,7 @@ type ShortRow = {
   crop_x: number | null;
   crop_y: number | null;
   preview_frame_key: string | null;
+  thumbnail_key: string | null;
 };
 
 function mapShortRow(row: ShortRow): Short {
@@ -346,6 +351,7 @@ function mapShortRow(row: ShortRow): Short {
     cropX: row.crop_x,
     cropY: row.crop_y,
     previewFrameKey: row.preview_frame_key,
+    thumbnailKey: row.thumbnail_key,
   };
 }
 
