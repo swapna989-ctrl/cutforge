@@ -10,6 +10,12 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
   const router = useRouter();
   const isReady = project.status === "ready";
   const isFailed = project.pipelineStatus === "failed";
+  // "ingesting" is the upload-then-configure step (see clipping/page.tsx's configure panel) —
+  // the worker only ever claims "queued" jobs (see worker/src/supabase.ts's claimNextJob), so
+  // nothing is actually being processed yet here, no matter how long this step takes. Showing it
+  // as "Processing… 0%" the same as real worker states was genuinely misleading: it read as the
+  // video already being worked on before the user had even picked their options and hit Generate.
+  const isIngesting = project.pipelineStatus === "ingesting";
 
   const [thumbSrc, setThumbSrc] = useState<string | null>(null);
   const [shortsCount, setShortsCount] = useState<number | null>(null);
@@ -64,7 +70,9 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
     ? { text: "Failed", cls: "bg-[#EF4444]/10 text-[#EF4444]" }
     : isReady
       ? { text: "Ready", cls: "bg-[#10B981]/10 text-[#10B981]" }
-      : { text: `Processing… ${project.progress}%`, cls: "bg-[#F59E0B]/15 text-[#F59E0B]" };
+      : isIngesting
+        ? { text: "Draft", cls: "bg-[#B3ACA6]/15 text-[#7B7579]" }
+        : { text: `Processing… ${project.progress}%`, cls: "bg-[#F59E0B]/15 text-[#F59E0B]" };
 
   // Only a finished project (ready or failed) has anywhere real to go — a still-processing one
   // has no clips yet, so it stays put on this page and its progress bar below is the loading
@@ -78,7 +86,8 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
           <video src={thumbSrc} muted playsInline preload="metadata" className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2">
-            {!isReady && !isFailed && (
+            {isIngesting && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">edit_note</span>}
+            {!isReady && !isFailed && !isIngesting && (
               <>
                 <div className="w-6 h-6 rounded-full border-2 border-[#ECE5E6] border-t-[#ed8395] animate-spin" />
                 <span className="text-xs font-semibold text-[#B3ACA6]">{project.progress}%</span>
@@ -104,7 +113,7 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
           {project.ratio} · {project.createdAt}
         </p>
 
-        {!isReady && !isFailed && (
+        {!isReady && !isFailed && !isIngesting && (
           <div className="pt-2">
             <div className="w-full bg-[#ECE5E6] rounded-full h-1 overflow-hidden">
               <div className="bg-[#F59E0B] h-full rounded-full transition-all duration-500" style={{ width: `${project.progress}%` }} />
@@ -113,6 +122,7 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
           </div>
         )}
 
+        {isIngesting && <p className="text-[11px] text-[#B3ACA6] mt-2">Pick your options above and hit Generate clips</p>}
         {isReady && <p className="text-[11px] text-[#B3ACA6] mt-2">Click to view and download clips</p>}
         {isFailed && project.errorMessage && <p className="text-[11px] text-[#EF4444] mt-2 line-clamp-2">{project.errorMessage}</p>}
       </div>
