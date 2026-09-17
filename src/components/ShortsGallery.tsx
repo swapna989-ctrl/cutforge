@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { deleteShort, type Short } from "@/lib/projects";
+
+function editHref(projectId: string, shortId: string, section: "settings" | "crop"): string {
+  return `/shorts/edit?projectId=${projectId}&shortId=${shortId}&section=${section}`;
+}
 
 function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
@@ -25,6 +30,7 @@ const STATUS_META: Record<Short["status"], { text: string; dot: string }> = {
   processing: { text: "Rendering…", dot: "bg-[#F59E0B]" },
   ready: { text: "Ready", dot: "bg-[#10B981]" },
   failed: { text: "Failed", dot: "bg-[#EF4444]" },
+  regenerating: { text: "Queued to regenerate…", dot: "bg-[#B0A996]" },
 };
 
 /** Lazily fetches the real rendered short's playable URL — same presigned-URL pattern used
@@ -88,6 +94,12 @@ function ShortCard({
   const [deleting, setDeleting] = useState(false);
   const meta = STATUS_META[short.status];
   const clipSeconds = short.sourceEndSeconds - short.sourceStartSeconds;
+  const router = useRouter();
+
+  function handleEdit(e: React.MouseEvent, section: "settings" | "crop") {
+    e.stopPropagation();
+    router.push(editHref(projectId, short.id, section));
+  }
 
   async function handleDownload(e: React.MouseEvent) {
     e.stopPropagation();
@@ -180,19 +192,17 @@ function ShortCard({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={(e) => e.stopPropagation()}
-              disabled
-              title="Caption editing is coming soon"
-              className="w-7 h-7 rounded-lg bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+              onClick={(e) => handleEdit(e, "settings")}
+              title="Edit caption style, font, position, language, and line count"
+              className="w-7 h-7 rounded-lg bg-[#fdd5e1]/60 hover:bg-[#fdd5e1] text-[#9a4153] flex items-center justify-center transition-colors cursor-pointer"
             >
               <span className="material-symbols-outlined text-[15px]">edit_note</span>
             </button>
             <button
               type="button"
-              onClick={(e) => e.stopPropagation()}
-              disabled
-              title="Cropping is coming soon"
-              className="w-7 h-7 rounded-lg bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+              onClick={(e) => handleEdit(e, "crop")}
+              title="Reframe or change the aspect ratio"
+              className="w-7 h-7 rounded-lg bg-[#fdd5e1]/60 hover:bg-[#fdd5e1] text-[#9a4153] flex items-center justify-center transition-colors cursor-pointer"
             >
               <span className="material-symbols-outlined text-[15px]">crop</span>
             </button>
@@ -233,6 +243,11 @@ function ShortDetailModal({
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const router = useRouter();
+
+  function handleEdit(section: "settings" | "crop") {
+    router.push(editHref(projectId, short.id, section));
+  }
 
   async function handleDownload() {
     if (downloading || !isReady) return;
@@ -344,16 +359,16 @@ function ShortDetailModal({
               Close
             </button>
             <button
-              disabled
-              title="Caption editing is coming soon"
-              className="w-9 h-9 rounded-full bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+              onClick={() => handleEdit("settings")}
+              title="Edit caption style, font, position, language, and line count"
+              className="w-9 h-9 rounded-full bg-[#fdd5e1]/60 hover:bg-[#fdd5e1] text-[#9a4153] flex items-center justify-center transition-colors cursor-pointer"
             >
               <span className="material-symbols-outlined text-[18px]">edit_note</span>
             </button>
             <button
-              disabled
-              title="Cropping is coming soon"
-              className="w-9 h-9 rounded-full bg-[#fdd5e1]/40 text-[#9a4153]/40 flex items-center justify-center cursor-not-allowed"
+              onClick={() => handleEdit("crop")}
+              title="Reframe or change the aspect ratio"
+              className="w-9 h-9 rounded-full bg-[#fdd5e1]/60 hover:bg-[#fdd5e1] text-[#9a4153] flex items-center justify-center transition-colors cursor-pointer"
             >
               <span className="material-symbols-outlined text-[18px]">crop</span>
             </button>

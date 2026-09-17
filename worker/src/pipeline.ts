@@ -137,6 +137,14 @@ export async function processJob(job: ProjectRow): Promise<void> {
     await updateJob(job.id, { status_message: "Removing dead air & filler pauses…", progress: 40 });
     await cutSilences(normalizedPath, silences, duration, trimmedPath, tmpDir);
 
+    // Persisted permanently (unlike every other file in tmpDir) so a short can be re-edited later
+    // — short.source_start_seconds/end_seconds are positions in THIS trimmed timeline, not the
+    // raw upload, so correctly re-extracting a short's footage after this job finishes requires
+    // this exact file, not a fresh normalize+cut that could land on a different result.
+    const trimmedKey = `${job.user_id}/trimmed/${job.id}.mp4`;
+    await uploadFromFile(trimmedPath, trimmedKey, "video/mp4");
+    await updateJob(job.id, { trimmed_key: trimmedKey });
+
     // From here on the source is a single, clean (dead-air-trimmed) video — the AI Clip Planner
     // reasons over that ONE transcript/timeline once, rather than per-candidate, so planning
     // stays a single Whisper + LLM call regardless of how many shorts eventually get rendered.

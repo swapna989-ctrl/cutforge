@@ -33,6 +33,10 @@ export type ProjectRow = {
   caption_language: CaptionLanguage;
   caption_line_count: CaptionLineCount;
   clip_length: ClipLength;
+  // The dead-air-trimmed source this project's shorts were cut from — persisted (unlike every
+  // other intermediate file in worker/src/pipeline.ts's tmpDir) specifically so a short can be
+  // re-edited later. Null for any project processed before this column existed.
+  trimmed_key: string | null;
 };
 
 export async function claimNextJob(): Promise<ProjectRow | null> {
@@ -61,6 +65,14 @@ export async function claimNextJob(): Promise<ProjectRow | null> {
 export async function updateJob(id: string, patch: Partial<ProjectRow>): Promise<void> {
   const { error } = await supabase.from("projects").update(patch).eq("id", id);
   if (error) throw error;
+}
+
+/** Fetches one project row as-is, no status filtering/claiming — used by regenerateShort to read
+ *  the parent project's current defaults/trimmed_key/watermark for a short being re-edited. */
+export async function getProject(id: string): Promise<ProjectRow | null> {
+  const { data, error } = await supabase.from("projects").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 /**
@@ -116,10 +128,29 @@ export type ShortRow = {
   // LLM-estimated, not measured (no posted-clip performance data exists yet) — see
   // clipPlanner.ts's ClipCandidate.viralScore for what it actually represents.
   viral_score: number | null;
-  status: "pending" | "processing" | "ready" | "failed";
+  // 'regenerating' is this row's own version of ProjectRow.pipeline_status's 'queued' — set by
+  // the frontend, claimed and moved onward only by claimNextShortRegenerate below.
+  status: "pending" | "processing" | "ready" | "failed" | "regenerating";
   output_key: string | null;
   error_message: string | null;
   created_at: string;
+  // Per-short overrides — null means "inherit the parent project's current default" (see
+  // regenerate.ts's resolveSetting), same nullable-override pattern as CaptionPresetSpec's
+  // fontOverride in ffmpeg.ts. Editing one short never touches its project or its siblings.
+  caption_style: CaptionStyle | null;
+  caption_font: CaptionFont | null;
+  caption_position: CaptionPosition | null;
+  caption_language: CaptionLanguage | null;
+  caption_line_count: CaptionLineCount | null;
+  ratio: "9:16" | "16:9" | "1:1" | null;
+  // A manual crop center as a fraction (0-1) of the *source* frame — same convention
+  // detectFaceCenterFraction returns in faceCrop.ts. Null means "keep auto face-detection".
+  crop_x: number | null;
+  crop_y: number | null;
+  // Set once the worker has extracted an uncropped representative frame for the crop tool to
+  // show — '__pending__' is the sentinel the frontend writes to request one (see
+  // claimNextPreviewFrame below).
+  preview_frame_key: string | null;
 };
 
 /** Inserts one `pending` short row per planned candidate, in position order — done up front
@@ -147,4 +178,58 @@ export async function createShorts(
 export async function updateShort(id: string, patch: Partial<ShortRow>): Promise<void> {
   const { error } = await supabase.from("shorts").update(patch).eq("id", id);
   if (error) throw error;
+}
+
+/** The sentinel the frontend writes to preview_frame_key to request one — see
+ *  claimNextPreviewFrame below. Shared here so neither side can typo it independently. */
+export const PREVIEW_FRAME_PENDING = "__pending__";
+
+/** Not a true atomic claim (same accepted single-worker-v1 limitation as claimNextJob) — polls
+ *  for a short whose crop tool has been opened but has no preview frame yet. */
+export async function claimNextPreviewFrame(): Promise<ShortRow | null> {
+  const { data, error } = await supabase
+    .from("shorts")
+    .select("*")
+    .eq("preview_frame_key", PREVIEW_FRAME_PENDING)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+/** Same claim pattern as claimNextJob (update-with-status-guard as the race check), just for one
+ *  short instead of one project — set by the frontend's Regenerate button, only ever moved onward
+ *  by this function. */
+export async function claimNextShortRegenerate(): Promise<ShortRow | null> {
+  const { data, error } = await supabase
+    .from("shorts")
+    .select("*")
+    .eq("status", "regenerating")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  const { error: claimError } = await supabase
+    .from("shorts")
+    .update({ status: "processing" })
+    .eq("id", data.id)
+    .eq("status", "regenerating");
+  if (claimError) throw claimError;
+
+  return { ...data, status: "processing" };
+}
+
+/**
+ * The real charge for regenerating one short (see charge_short_regenerate_credit in
+ * supabase/migrations/0020_short_editing.sql), called right before the metered Whisper/render
+ * calls that actually cost money run — same "charge before the expensive work starts" ordering as
+ * chargeProjectCredits. Throws with a message starting "INSUFFICIENT_CREDITS: " if the owner
+ * can't afford it.
+ */
+export async function chargeShortRegenerateCredit(shortId: string): Promise<void> {
+  const { error } = await supabase.rpc("charge_short_regenerate_credit", { p_short_id: shortId }).single();
+  if (error) throw new Error(error.message);
 }

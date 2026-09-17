@@ -276,10 +276,27 @@ export type Short = {
   /** LLM-estimated, not measured — see worker/src/clipPlanner.ts. Null for shorts planned
    *  before viral scoring existed. */
   viralScore: number | null;
-  status: "pending" | "processing" | "ready" | "failed";
+  /** 'regenerating' is this short's own version of Project.pipelineStatus's 'queued' — set by
+   *  the Edit/Crop page's Regenerate button, moved onward only by the worker's own poll loop. */
+  status: "pending" | "processing" | "ready" | "failed" | "regenerating";
   outputKey: string | null;
   errorMessage: string | null;
   createdAt: string;
+  /** Per-short overrides — null means "inherit the parent project's current default", same
+   *  nullable-override pattern as CaptionPresetSpec's fontOverride in worker/src/ffmpeg.ts.
+   *  Editing one short never touches its project or its siblings. */
+  captionStyle: CaptionStyle | null;
+  captionFont: CaptionFont | null;
+  captionPosition: CaptionPosition | null;
+  captionLanguage: CaptionLanguage | null;
+  captionLineCount: CaptionLineCount | null;
+  ratio: Ratio | null;
+  /** A manual crop center as a fraction (0-1) of the *source* frame — null means "keep auto
+   *  face-detection", today's unchanged behavior. */
+  cropX: number | null;
+  cropY: number | null;
+  /** Set once the worker has extracted an uncropped representative frame for the crop tool. */
+  previewFrameKey: string | null;
 };
 
 type ShortRow = {
@@ -295,6 +312,15 @@ type ShortRow = {
   output_key: string | null;
   error_message: string | null;
   created_at: string;
+  caption_style: string | null;
+  caption_font: string | null;
+  caption_position: string | null;
+  caption_language: string | null;
+  caption_line_count: string | null;
+  ratio: string | null;
+  crop_x: number | null;
+  crop_y: number | null;
+  preview_frame_key: string | null;
 };
 
 function mapShortRow(row: ShortRow): Short {
@@ -311,6 +337,15 @@ function mapShortRow(row: ShortRow): Short {
     outputKey: row.output_key,
     errorMessage: row.error_message,
     createdAt: row.created_at,
+    captionStyle: row.caption_style as CaptionStyle | null,
+    captionFont: row.caption_font as CaptionFont | null,
+    captionPosition: row.caption_position as CaptionPosition | null,
+    captionLanguage: row.caption_language as CaptionLanguage | null,
+    captionLineCount: row.caption_line_count as CaptionLineCount | null,
+    ratio: row.ratio as Ratio | null,
+    cropX: row.crop_x,
+    cropY: row.crop_y,
+    previewFrameKey: row.preview_frame_key,
   };
 }
 
@@ -325,6 +360,49 @@ export async function listShorts(projectId: string): Promise<Short[]> {
     .order("position", { ascending: true });
   if (error) throw error;
   return (data as ShortRow[]).map(mapShortRow);
+}
+
+/** Fetches one short by id — used by the Edit/Crop page, which is opened by id from a link
+ *  rather than already having the short in hand from a list. RLS scopes this via the parent
+ *  project's user_id, same join pattern as listShorts. */
+export async function getShort(id: string): Promise<Short | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase.from("shorts").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? mapShortRow(data as ShortRow) : null;
+}
+
+/** Patches one short — used by the Edit/Crop page to save per-short overrides and, on Regenerate,
+ *  to flip status to 'regenerating' (only the worker's poll loop moves it on from there). */
+export async function updateShort(
+  id: string,
+  patch: Partial<{
+    captionStyle: CaptionStyle | null;
+    captionFont: CaptionFont | null;
+    captionPosition: CaptionPosition | null;
+    captionLanguage: CaptionLanguage | null;
+    captionLineCount: CaptionLineCount | null;
+    ratio: Ratio | null;
+    cropX: number | null;
+    cropY: number | null;
+    previewFrameKey: string | null;
+    status: Short["status"];
+  }>
+): Promise<void> {
+  const supabase = createClient();
+  const update: Record<string, unknown> = {};
+  if (patch.captionStyle !== undefined) update.caption_style = patch.captionStyle;
+  if (patch.captionFont !== undefined) update.caption_font = patch.captionFont;
+  if (patch.captionPosition !== undefined) update.caption_position = patch.captionPosition;
+  if (patch.captionLanguage !== undefined) update.caption_language = patch.captionLanguage;
+  if (patch.captionLineCount !== undefined) update.caption_line_count = patch.captionLineCount;
+  if (patch.ratio !== undefined) update.ratio = patch.ratio;
+  if (patch.cropX !== undefined) update.crop_x = patch.cropX;
+  if (patch.cropY !== undefined) update.crop_y = patch.cropY;
+  if (patch.previewFrameKey !== undefined) update.preview_frame_key = patch.previewFrameKey;
+  if (patch.status !== undefined) update.status = patch.status;
+  const { error } = await supabase.from("shorts").update(update).eq("id", id);
+  if (error) throw error;
 }
 
 export async function deleteShort(id: string): Promise<void> {

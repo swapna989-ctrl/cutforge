@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getDownloadUrl } from "@/lib/r2";
+import { getDownloadUrl, getImagePreviewUrl } from "@/lib/r2";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -12,7 +12,25 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const projectId = url.searchParams.get("projectId");
   const shortId = url.searchParams.get("shortId");
+  const kind = url.searchParams.get("kind");
   if (!projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
+
+  if (shortId && kind === "preview") {
+    // Same RLS-scoped ownership check as the output_key branch below, just against
+    // preview_frame_key instead — the Reframe tool's crop background, not the final render.
+    const { data: short, error } = await supabase
+      .from("shorts")
+      .select("preview_frame_key")
+      .eq("id", shortId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!short?.preview_frame_key || short.preview_frame_key === "__pending__") {
+      return NextResponse.json({ error: "No preview frame yet" }, { status: 404 });
+    }
+    const downloadUrl = await getImagePreviewUrl(short.preview_frame_key);
+    return NextResponse.json({ downloadUrl });
+  }
 
   if (shortId) {
     // RLS (select_own_shorts, via a join to projects.user_id) already scopes this to the

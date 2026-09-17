@@ -59,3 +59,11 @@ export function getDownloadUrl(key: string, filename: string): Promise<string> {
   });
   return getSignedUrl(s3, command, { expiresIn: 300 });
 }
+
+/** For the crop tool's background image — deliberately no ResponseContentDisposition (inline,
+ *  not a forced download) and a real image content type, unlike getDownloadUrl's video/mp4 +
+ *  attachment, which would stop a browser's <img> decoder from rendering these JPEG bytes. */
+export function getImagePreviewUrl(key: string): Promise<string> {
+  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key, ResponseContentType: "image/jpeg" });
+  return getSignedUrl(s3, command, { expiresIn: 300 });
+}
