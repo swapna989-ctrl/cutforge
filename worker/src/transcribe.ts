@@ -20,6 +20,62 @@ export type CaptionLanguage = "auto" | "hinglish";
 const HINGLISH_PROMPT_HINT =
   "Yaar, aaj maine ek bahut hi zabardast video banaya hai, isko dekhkar aapko bhi maza aayega, chalo shuru karte hain.";
 
+// Same Unicode block as ffmpeg.ts's own DEVANAGARI_RANGE (kept as a separate literal rather than
+// a cross-import — that module imports FROM this one, not the other way around).
+const DEVANAGARI_RANGE = /[ऀ-ॿ]/;
+
+/**
+ * Guarantees Roman-script output for "hinglish" mode instead of just hoping the prompt hint above
+ * worked — confirmed by real testing against real audio that the hint alone is genuinely
+ * inconsistent (one real segment came back entirely in Devanagari despite it, right alongside
+ * another that came back clean). Runs after Whisper as a deterministic post-process: whatever
+ * script Whisper actually used, any word still in Devanagari gets transliterated into casual
+ * Roman-script Hindi via one batched LLM call — this changes the SCRIPT only, the language and
+ * meaning stay Hindi, exactly how a real Hinglish caption is typed, never an actual translation.
+ * The full word list (not just the Devanagari ones) is sent in one call so the model has real
+ * sentence context for natural spellings, but only words that were actually in Devanagari are
+ * ever replaced — an already-Latin word (a code-switched English word mid-sentence) is kept
+ * byte-for-byte as Whisper wrote it. Falls back to the original words untouched if the response
+ * doesn't parse as a same-length JSON array — never risks misaligning the real per-word
+ * timestamps by trusting a shorter/longer/reordered list.
+ */
+async function transliterateToHinglish(words: Word[]): Promise<Word[]> {
+  if (!words.some((w) => DEVANAGARI_RANGE.test(w.word))) return words;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "user",
+          content: `Here is a Hindi (or mixed Hindi/English) transcript, given as a JSON array of individual words in their original spoken order: ${JSON.stringify(
+            words.map((w) => w.word)
+          )}
+
+Return ONLY valid JSON of this exact shape: {"words": string[]} -- an array of EXACTLY the same length, in the same order, where:
+- Any word written in Devanagari script is transliterated into casual Roman-script Hindi, the way it's commonly typed in Hinglish captions on social media (e.g. है -> hai, नहीं -> nahi, क्या -> kya) -- this changes the SCRIPT only, never the language or meaning. Do not translate anything into English.
+- Any word already in Latin script is returned completely unchanged.
+Do not merge, split, or reorder words -- the output array length must exactly match the input.`,
+        },
+      ],
+    });
+
+    const raw = response.choices[0]?.message?.content;
+    if (!raw) throw new Error("Empty response from transliteration model");
+    const parsed = JSON.parse(raw) as { words?: unknown };
+    if (!Array.isArray(parsed.words) || parsed.words.length !== words.length || !parsed.words.every((w) => typeof w === "string")) {
+      throw new Error(`Transliteration response shape mismatch (expected ${words.length} strings)`);
+    }
+
+    const transliterated = parsed.words as string[];
+    return words.map((w, i) => ({ ...w, word: transliterated[i] }));
+  } catch (err) {
+    console.error("Hinglish transliteration failed, keeping original script for this chunk:", describeError(err));
+    return words;
+  }
+}
+
 export type CaptionWord = { text: string; start: number; end: number };
 /**
  * One on-screen caption burst — up to 3 lines (see CaptionLineCount), each word keeping its own
@@ -243,10 +299,14 @@ export async function transcribeCaptions(
         throw new Error("Whisper returned 0 words for non-trivial audio");
       }
 
+      // Runs on the raw flat word list, before chunking — transliteration doesn't need to know
+      // about chunk boundaries, only chunkWords/chunkWordsFlexible do.
+      const finalWords = language === "hinglish" ? await transliterateToHinglish(words) : words;
+
       // chunkWords/buildChunk (today's exact, already-shipped default) handle "auto" directly and
       // stay completely unparameterized — chunkWordsFlexible/buildChunkFlexible are a fully
       // separate path for the 3 explicit modes, never the other way around.
-      return lineCount === "auto" ? chunkWords(words) : chunkWordsFlexible(words, LINE_COUNT_BOUNDS[lineCount]);
+      return lineCount === "auto" ? chunkWords(finalWords) : chunkWordsFlexible(finalWords, LINE_COUNT_BOUNDS[lineCount]);
     } catch (err) {
       lastError = err;
       console.error(`Transcription attempt ${attempt}/${MAX_ATTEMPTS} failed:`, describeError(err));
