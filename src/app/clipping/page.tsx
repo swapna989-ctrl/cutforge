@@ -11,7 +11,7 @@ import { useBilling } from "@/lib/billing";
 import { creditsForDuration } from "@/lib/pricing";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, updateProject, deleteProject, type Project } from "@/lib/projects";
-import type { Ratio, CaptionStyle, CaptionLanguage } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionLanguage, ClipLength } from "@/lib/pipeline";
 
 // A project sits in one of these while the worker is actively on it — used to decide whether
 // this page's own poll loop needs to keep running.
@@ -74,6 +74,7 @@ export default function ClippingPage() {
   const [optionRatio, setOptionRatio] = useState<Ratio>("9:16");
   const [optionCaptionStyle, setOptionCaptionStyle] = useState<CaptionStyle>("classic");
   const [optionCaptionLanguage, setOptionCaptionLanguage] = useState<CaptionLanguage>("auto");
+  const [optionClipLength, setOptionClipLength] = useState<ClipLength>("auto");
   // Required before Generate is enabled — this product downloads and reprocesses someone else's
   // YouTube/Twitch video or a file the user picked, so an explicit rights attestation is real
   // legal protection, not just a UI flourish. Reset on every new pending submission rather than
@@ -198,6 +199,7 @@ export default function ClippingPage() {
     setOptionRatio(prefsReady ? prefs.defaultRatio : "9:16");
     setOptionCaptionStyle(prefsReady ? prefs.defaultCaptionStyle : "classic");
     setOptionCaptionLanguage(prefsReady ? prefs.defaultCaptionLanguage : "auto");
+    setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
     setPending({
@@ -221,6 +223,7 @@ export default function ClippingPage() {
         ratio: prefsReady ? prefs.defaultRatio : "9:16",
         captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
         captionLanguage: prefsReady ? prefs.defaultCaptionLanguage : "auto",
+        clipLength: prefsReady ? prefs.defaultClipLength : "auto",
         pipelineStatus: "ingesting",
         progress: 0,
         sourceKey: firstKey,
@@ -275,6 +278,7 @@ export default function ClippingPage() {
     setOptionRatio(prefsReady ? prefs.defaultRatio : "9:16");
     setOptionCaptionStyle(prefsReady ? prefs.defaultCaptionStyle : "classic");
     setOptionCaptionLanguage(prefsReady ? prefs.defaultCaptionLanguage : "auto");
+    setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
     setPending({ kind: "url", label: trimmed, projectId: null, creditsEstimate: null, uploadDone: true });
@@ -288,7 +292,12 @@ export default function ClippingPage() {
     if (!pending) return;
     setGenerating(true);
     setGenerateError(null);
-    updatePrefs({ defaultRatio: optionRatio, defaultCaptionStyle: optionCaptionStyle, defaultCaptionLanguage: optionCaptionLanguage });
+    updatePrefs({
+      defaultRatio: optionRatio,
+      defaultCaptionStyle: optionCaptionStyle,
+      defaultCaptionLanguage: optionCaptionLanguage,
+      defaultClipLength: optionClipLength,
+    });
 
     try {
       if (pending.kind === "file") {
@@ -297,12 +306,20 @@ export default function ClippingPage() {
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
           captionLanguage: optionCaptionLanguage,
+          clipLength: optionClipLength,
           pipelineStatus: "queued",
         });
         setProjects((prev) =>
           prev.map((p) =>
             p.id === pending.projectId
-              ? { ...p, ratio: optionRatio, captionStyle: optionCaptionStyle, captionLanguage: optionCaptionLanguage, pipelineStatus: "queued" }
+              ? {
+                  ...p,
+                  ratio: optionRatio,
+                  captionStyle: optionCaptionStyle,
+                  captionLanguage: optionCaptionLanguage,
+                  clipLength: optionClipLength,
+                  pipelineStatus: "queued",
+                }
               : p
           )
         );
@@ -312,6 +329,7 @@ export default function ClippingPage() {
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
           captionLanguage: optionCaptionLanguage,
+          clipLength: optionClipLength,
           pipelineStatus: "queued",
           progress: 0,
           sourceUrl: pending.label,
@@ -463,6 +481,29 @@ export default function ClippingPage() {
                 Biases Hindi speech toward Romanized captions (&quot;yeh kya ho raha hai&quot;) instead of Devanagari script. Best-effort —
                 quality can vary, especially on longer clips.
               </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#7B7579] mb-2">Clip length</label>
+              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                {([
+                  { value: "auto", label: "Auto" },
+                  { value: "short", label: "15-30s" },
+                  { value: "long", label: "30-60s" },
+                ] as { value: ClipLength; label: string }[]).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setOptionClipLength(opt.value)}
+                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                      optionClipLength === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-[#B3ACA6] mt-2">Auto targets 30-90s per clip — the range Flovura's found works best by default.</p>
             </div>
 
             <div className="rounded-xl border border-[#ECE5E6] bg-[#FAF8F7] px-4 py-3">

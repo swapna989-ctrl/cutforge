@@ -5,7 +5,7 @@ import WorkspaceShell from "@/components/WorkspaceShell";
 import MediaStage, { type ClipStripItem } from "@/components/MediaStage";
 import ExportPanel, { type ExportSnapshot } from "@/components/ExportPanel";
 import ShortsGallery from "@/components/ShortsGallery";
-import type { PipelineStatus, Ratio } from "@/lib/pipeline";
+import type { PipelineStatus, Ratio, ClipLength } from "@/lib/pipeline";
 import {
   createProject,
   createProjectClip,
@@ -37,6 +37,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   const clipPreviewUrlsRef = useRef<string[]>([]);
 
   const [ratio, setRatio] = useState<Ratio>(initialProject?.ratio ?? "9:16");
+  const [clipLength, setClipLength] = useState<ClipLength>(initialProject?.clipLength ?? "auto");
 
   const [status, setStatus] = useState<PipelineStatus>(initialProject?.pipelineStatus ?? "idle");
   const [fileName, setFileName] = useState<string | null>(initialProject?.name ?? null);
@@ -72,11 +73,14 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
   // to the legacy single-output view" and flashes it before flipping to the gallery.
   const [shortsChecked, setShortsChecked] = useState(false);
 
-  // Pick up the user's saved default ratio for brand-new (non-resumed) projects, once prefs load.
+  // Pick up the user's saved default ratio/clip length for brand-new (non-resumed) projects,
+  // once prefs load.
   useEffect(() => {
     if (!initialProject && prefsReady) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setRatio(prefs.defaultRatio);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setClipLength(prefs.defaultClipLength);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to prefs becoming ready, not every prefs change
   }, [prefsReady]);
@@ -229,6 +233,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
         ratio,
         captionStyle: prefsReady ? prefs.defaultCaptionStyle : "classic",
         captionLanguage: prefsReady ? prefs.defaultCaptionLanguage : "auto",
+        clipLength,
         pipelineStatus: "ingesting",
         progress: 0,
         sourceKey: firstKey,
@@ -531,6 +536,13 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     }
   }
 
+  function handleSetClipLength(next: ClipLength) {
+    setClipLength(next);
+    if (projectIdRef.current) {
+      updateProject(projectIdRef.current, { clipLength: next }).catch(() => {});
+    }
+  }
+
   // A resumed "ready" project starts with an empty shorts array before the real fetch above has
   // resolved — without this, that gap briefly renders as "no shorts, must be legacy" and flashes
   // the old MediaStage view before flipping to the gallery a moment later.
@@ -544,7 +556,7 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
             rendered — so this only shows before that point (and not while it's still ambiguous
             whether this project even has any). */}
         {!showGallery && !awaitingShortsCheck && (
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="inline-flex items-center p-1 rounded-full bg-[#F5F1EA] border border-[#E8E2D6] shadow-inner">
               <button
                 onClick={() => handleSetRatio("9:16")}
@@ -573,6 +585,24 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
                 <span className="material-symbols-outlined text-[14px]">crop_square</span>
                 <span>1:1</span>
               </button>
+            </div>
+
+            <div className="inline-flex items-center p-1 rounded-full bg-[#F5F1EA] border border-[#E8E2D6] shadow-inner">
+              {([
+                { value: "auto", label: "Auto" },
+                { value: "short", label: "15-30s" },
+                { value: "long", label: "30-60s" },
+              ] as { value: ClipLength; label: string }[]).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => handleSetClipLength(opt.value)}
+                  className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-300 select-none cursor-pointer ${
+                    clipLength === opt.value ? "bg-[#A8724A] text-white shadow-[0_1px_3px_rgba(168,114,74,0.3)] font-semibold" : "text-[#8A8375] hover:text-[#2B2926]"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </div>
         )}

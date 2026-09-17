@@ -21,13 +21,19 @@ export type ClipCandidate = {
   viralScore: number;
 };
 
-// A clip under ~30s reads as an abrupt fragment rather than a real standalone short, regardless
-// of how short the source video is — a 5-minute source doesn't get a pass to produce choppier
-// clips than a 30-minute one. If a video genuinely doesn't have enough for even one clip this
-// long, planClips returns fewer candidates (down to zero, which fails the job) rather than ever
-// shortening this floor.
-const MIN_CLIP_SECONDS = 30;
-const MAX_CLIP_SECONDS = 90;
+export type ClipLength = "auto" | "short" | "long";
+
+// "auto" is the original, unqualified default (a clip under ~30s reads as an abrupt fragment
+// rather than a real standalone short, regardless of how short the source video is — a 5-minute
+// source doesn't get a pass to produce choppier clips than a 30-minute one) — kept exactly as-is.
+// "short"/"long" are real user choices to trade that floor for volume, or the ceiling for tighter
+// pacing; a video that genuinely doesn't have enough for even one clip at the chosen length still
+// returns fewer candidates (down to zero, which fails the job) rather than ever bending the range.
+const CLIP_LENGTH_BOUNDS: Record<ClipLength, { min: number; max: number }> = {
+  auto: { min: 30, max: 90 },
+  short: { min: 15, max: 30 },
+  long: { min: 30, max: 60 },
+};
 
 // Not a target — there is no fixed clip count any more (see buildPrompt). This is only a sanity
 // ceiling so a pathological response, or a genuinely very eventful long source, can't blow the
@@ -44,12 +50,12 @@ function buildTranscriptText(segments: TranscriptSegment[]): string {
   return segments.map((s) => `[${formatTimestamp(s.start)}] ${s.text.trim()}`).join("\n");
 }
 
-function buildPrompt(segments: TranscriptSegment[], videoDurationSeconds: number): string {
+function buildPrompt(segments: TranscriptSegment[], videoDurationSeconds: number, bounds: { min: number; max: number }): string {
   return `You are an expert short-form video editor. Below is a timestamped transcript of a ${Math.round(
     videoDurationSeconds
-  )}-second video. Find every genuinely strong, standalone moment worth turning into a short vertical clip (each ${MIN_CLIP_SECONDS}-${MAX_CLIP_SECONDS} seconds long) for TikTok, Instagram Reels, and YouTube Shorts.
+  )}-second video. Find every genuinely strong, standalone moment worth turning into a short vertical clip (each ${bounds.min}-${bounds.max} seconds long) for TikTok, Instagram Reels, and YouTube Shorts.
 
-There is no fixed number to hit — match the count to what this specific video actually contains. A short or low-event video might genuinely only have 1-2 moments that hold up on their own; a long, eventful one might have 8-10 or more. Never pad the count with a weak, repetitive, or overlapping clip just to reach a higher number, and never leave out a genuinely strong moment just to keep the count low. Every clip must be at least ${MIN_CLIP_SECONDS} seconds long — never shorter, even if that means finding fewer moments overall.
+There is no fixed number to hit — match the count to what this specific video actually contains. A short or low-event video might genuinely only have 1-2 moments that hold up on their own; a long, eventful one might have 8-10 or more. Never pad the count with a weak, repetitive, or overlapping clip just to reach a higher number, and never leave out a genuinely strong moment just to keep the count low. Every clip must be at least ${bounds.min} seconds long — never shorter, even if that means finding fewer moments overall.
 
 Pick moments that are surprising, funny, emotionally resonant, controversial, or contain a clear self-contained story or insight. Each clip must start and end at a natural sentence boundary — never mid-sentence or mid-thought. startTime and endTime must be real seconds that fall within the transcript's own time range below.
 
@@ -109,12 +115,18 @@ function snapToBoundary(time: number, segments: TranscriptSegment[], edge: "star
  * (snapped onto real transcript boundaries, see snapToBoundary), a hook line, and a caption per
  * candidate. The count adapts to what the video actually supports (see buildPrompt) rather than
  * targeting a fixed number — MAX_CANDIDATES is a safety ceiling, not a target, and every
- * candidate must still be at least MIN_CLIP_SECONDS long regardless of the source's own length.
- * This only plans WHAT to clip; it doesn't render anything (mirrors the existing
- * transcribeCaptions/finalizeVideo split: get real data, then act on it as a separate step).
+ * candidate must still fall within `clipLength`'s bounds (see CLIP_LENGTH_BOUNDS) regardless of
+ * the source's own length. This only plans WHAT to clip; it doesn't render anything (mirrors the
+ * existing transcribeCaptions/finalizeVideo split: get real data, then act on it as a separate
+ * step).
  */
-export async function planClips(segments: TranscriptSegment[], videoDurationSeconds: number): Promise<ClipCandidate[]> {
+export async function planClips(
+  segments: TranscriptSegment[],
+  videoDurationSeconds: number,
+  clipLength: ClipLength
+): Promise<ClipCandidate[]> {
   if (segments.length === 0) throw new Error("Cannot plan clips from an empty transcript");
+  const bounds = CLIP_LENGTH_BOUNDS[clipLength];
 
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
@@ -124,7 +136,7 @@ export async function planClips(segments: TranscriptSegment[], videoDurationSeco
       const response = await openai.chat.completions.create({
         model: MODEL,
         response_format: { type: "json_object" },
-        messages: [{ role: "user", content: buildPrompt(segments, videoDurationSeconds) }],
+        messages: [{ role: "user", content: buildPrompt(segments, videoDurationSeconds, bounds) }],
       });
 
       const raw = response.choices[0]?.message?.content;
@@ -148,7 +160,7 @@ export async function planClips(segments: TranscriptSegment[], videoDurationSeco
       for (const c of snapped) {
         if (c.startTime < 0 || c.endTime > videoDurationSeconds || c.endTime <= c.startTime) continue;
         const duration = c.endTime - c.startTime;
-        if (duration < MIN_CLIP_SECONDS || duration > MAX_CLIP_SECONDS) continue;
+        if (duration < bounds.min || duration > bounds.max) continue;
         // Two distinct raw candidates can snap onto the same pair of real boundaries — keep the
         // first (already the model's own preferred ordering) rather than rendering a duplicate.
         const key = `${c.startTime.toFixed(2)}-${c.endTime.toFixed(2)}`;

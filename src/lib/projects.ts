@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
-import type { PipelineStatus, Ratio, CaptionStyle, CaptionLanguage } from "@/lib/pipeline";
+import type { PipelineStatus, Ratio, CaptionStyle, CaptionLanguage, ClipLength } from "@/lib/pipeline";
 
 export type Project = {
   id: string;
@@ -7,6 +7,7 @@ export type Project = {
   ratio: Ratio;
   captionStyle: CaptionStyle;
   captionLanguage: CaptionLanguage;
+  clipLength: ClipLength;
   pipelineStatus: PipelineStatus;
   progress: number;
   createdAt: string;
@@ -22,6 +23,7 @@ type ProjectRow = {
   ratio: string;
   caption_style: string;
   caption_language: string;
+  clip_length: string;
   pipeline_status: string;
   progress: number;
   created_at: string;
@@ -38,6 +40,7 @@ function mapRow(row: ProjectRow): Project {
     ratio: row.ratio as Ratio,
     captionStyle: row.caption_style as CaptionStyle,
     captionLanguage: row.caption_language as CaptionLanguage,
+    clipLength: row.clip_length as ClipLength,
     pipelineStatus,
     progress: row.progress,
     createdAt: row.created_at.slice(0, 10),
@@ -72,6 +75,9 @@ export async function createProject(input: {
   /** Whether to bias transcription toward Romanized Hindi — see worker/src/transcribe.ts's
    *  HINGLISH_PROMPT_HINT. Best-effort, opt-in. */
   captionLanguage: CaptionLanguage;
+  /** Which duration range the AI clip planner targets — see worker/src/clipPlanner.ts's
+   *  CLIP_LENGTH_BOUNDS, which is what actually enforces it. */
+  clipLength: ClipLength;
   pipelineStatus: PipelineStatus;
   progress: number;
   sourceKey?: string;
@@ -96,6 +102,7 @@ export async function createProject(input: {
       ratio: input.ratio,
       caption_style: input.captionStyle,
       caption_language: input.captionLanguage,
+      clip_length: input.clipLength,
       pipeline_status: input.pipelineStatus,
       progress: input.progress,
       source_key: input.sourceKey ?? null,
@@ -117,6 +124,7 @@ export async function updateProject(
     sourceKey: string;
     captionStyle: CaptionStyle;
     captionLanguage: CaptionLanguage;
+    clipLength: ClipLength;
   }>
 ): Promise<void> {
   const supabase = createClient();
@@ -127,6 +135,7 @@ export async function updateProject(
   if (patch.sourceKey !== undefined) update.source_key = patch.sourceKey;
   if (patch.captionStyle !== undefined) update.caption_style = patch.captionStyle;
   if (patch.captionLanguage !== undefined) update.caption_language = patch.captionLanguage;
+  if (patch.clipLength !== undefined) update.clip_length = patch.clipLength;
   const { error } = await supabase.from("projects").update(update).eq("id", id);
   if (error) throw error;
 }

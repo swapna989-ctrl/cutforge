@@ -1,25 +1,28 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import type { Ratio, CaptionStyle, CaptionLanguage } from "@/lib/pipeline";
+import type { Ratio, CaptionStyle, CaptionLanguage, ClipLength } from "@/lib/pipeline";
 import { useAuth } from "@/lib/auth";
 
 export type Prefs = {
   defaultRatio: Ratio;
   defaultCaptionStyle: CaptionStyle;
   defaultCaptionLanguage: CaptionLanguage;
+  defaultClipLength: ClipLength;
 };
 
 const DEFAULT_PREFS: Prefs = {
   defaultRatio: "9:16",
   defaultCaptionStyle: "classic",
   defaultCaptionLanguage: "auto",
+  defaultClipLength: "auto",
 };
 
 const STORAGE_PREFIX = "flovura_prefs:";
 const VALID_RATIOS: Ratio[] = ["9:16", "16:9", "1:1"];
 const VALID_CAPTION_STYLES: CaptionStyle[] = ["classic", "bold_yellow", "rose"];
 const VALID_CAPTION_LANGUAGES: CaptionLanguage[] = ["auto", "hinglish"];
+const VALID_CLIP_LENGTHS: ClipLength[] = ["auto", "short", "long"];
 
 function sanitize(raw: unknown): Prefs {
   if (!raw || typeof raw !== "object") return DEFAULT_PREFS;
@@ -34,6 +37,10 @@ function sanitize(raw: unknown): Prefs {
       typeof r.defaultCaptionLanguage === "string" && VALID_CAPTION_LANGUAGES.includes(r.defaultCaptionLanguage as CaptionLanguage)
         ? (r.defaultCaptionLanguage as CaptionLanguage)
         : DEFAULT_PREFS.defaultCaptionLanguage,
+    defaultClipLength:
+      typeof r.defaultClipLength === "string" && VALID_CLIP_LENGTHS.includes(r.defaultClipLength as ClipLength)
+        ? (r.defaultClipLength as ClipLength)
+        : DEFAULT_PREFS.defaultClipLength,
   };
 }
 

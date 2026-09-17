@@ -147,7 +147,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
     const trimmedDuration = await getDuration(trimmedPath);
 
     await updateJob(job.id, { status_message: "Planning clips…", progress: 55 });
-    const candidates = await planClips(segments, trimmedDuration);
+    const candidates = await planClips(segments, trimmedDuration, job.clip_length);
     const shorts = await createShorts(job.id, candidates);
 
     // Each short is rendered independently, through the same download-free steps the old
