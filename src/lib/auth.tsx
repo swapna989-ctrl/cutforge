@@ -77,9 +77,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signInWithGoogle() {
     const supabase = createClient();
+    // The bare flovuraai.com apex domain is inconsistently reachable (confirmed during Google
+    // OAuth brand verification: Google's crawler couldn't reach it, only www worked) -- a user who
+    // loaded the login page from the bare domain would get redirected back to it after a
+    // successful Google sign-in and land on a browser-level connection error. Normalized only for
+    // that one specific origin; localhost and www are untouched, so local dev testing still works.
+    const origin = window.location.origin === "https://flovuraai.com" ? "https://www.flovuraai.com" : window.location.origin;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: `${origin}/auth/callback` },
     });
     return { error: error ? friendlyAuthMessage(error.message) : null };
   }
