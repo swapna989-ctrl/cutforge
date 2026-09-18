@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { friendlyAuthMessage } from "@/lib/authErrors";
 
 export type AuthUser = { id: string; email: string; name: string };
 
@@ -56,13 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signInWithPassword(email: string, password: string) {
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
+    return { error: error ? friendlyAuthMessage(error.message) : null };
   }
 
   async function signUpWithPassword(email: string, password: string, name: string) {
     const supabase = createClient();
     const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
-    if (error) return { error: error.message };
+    if (error) return { error: friendlyAuthMessage(error.message) };
     if (!data.session) {
       // The Supabase project still has "Confirm email" turned on, so signUp() didn't return a
       // session. Surface this as an actionable error rather than silently bouncing the user
@@ -80,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       provider: "google",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
-    return { error: error?.message ?? null };
+    return { error: error ? friendlyAuthMessage(error.message) : null };
   }
 
   async function logout() {
@@ -93,12 +94,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (patch.name !== undefined) {
       const { error } = await supabase.auth.updateUser({ data: { full_name: patch.name } });
-      if (error) return { error: error.message };
+      if (error) return { error: friendlyAuthMessage(error.message) };
     }
 
     if (patch.email !== undefined && patch.email !== state.user?.email) {
       const { error } = await supabase.auth.updateUser({ email: patch.email });
-      if (error) return { error: error.message };
+      if (error) return { error: friendlyAuthMessage(error.message) };
       return { error: null, emailChangePending: true };
     }
 
@@ -110,13 +111,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
     });
-    return { error: error?.message ?? null };
+    return { error: error ? friendlyAuthMessage(error.message) : null };
   }
 
   async function updatePassword(newPassword: string) {
     const supabase = createClient();
     const { error } = await supabase.auth.updateUser({ password: newPassword });
-    return { error: error?.message ?? null };
+    return { error: error ? friendlyAuthMessage(error.message) : null };
   }
 
   return (

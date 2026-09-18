@@ -22,6 +22,7 @@ import { transcribeCaptions, transcribeSegments, type CaptionChunk } from "./tra
 import { planClips } from "./clipPlanner.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
 import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, type ProjectRow } from "./supabase.js";
+import { toUserMessage } from "./errors.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
 export const WORKER_BUILD = "2026-09-14-ai-clip-planner";
@@ -237,8 +238,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
         readyCount++;
       } catch (err) {
         console.error(`Short ${short.id} (project ${job.id}) failed:`, err);
-        const detail = err instanceof Error ? err.message : String(err);
-        await updateShort(short.id, { status: "failed", error_message: detail }).catch((updateErr) =>
+        await updateShort(short.id, { status: "failed", error_message: toUserMessage(err) }).catch((updateErr) =>
           console.error("Also failed to record the short's failure:", updateErr)
         );
       }
@@ -254,12 +254,16 @@ export async function processJob(job: ProjectRow): Promise<void> {
       status_message: `${readyCount} of ${shorts.length} shorts ready.`,
     });
   } catch (err) {
-    console.error(`Job ${job.id} failed:`, err);
-    const detail = err instanceof Error ? err.message : String(err);
+    // The env report (thread/memory diagnostics) goes to Railway's own logs, same as every other
+    // failure detail here — never into error_message, which a real user reads directly off their
+    // project card. It used to be appended there raw; a real user seeing
+    // "...\n[env] build=... cpus=4 totalmem=1024MB..." under a failed project is exactly the kind
+    // of internal-debug leak this file exists to stop.
+    console.error(`Job ${job.id} failed:`, err, `[env] ${environmentReport()}`);
     await updateJob(job.id, {
       pipeline_status: "failed",
       status_message: null,
-      error_message: `${detail}\n[env] ${environmentReport()}`,
+      error_message: toUserMessage(err),
     }).catch((updateErr) => console.error("Also failed to record the failure:", updateErr));
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});

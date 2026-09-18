@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { friendlyAuthMessage } from "@/lib/authErrors";
 
 /** Only allow same-app redirect targets — never forward a query param straight into a redirect. */
 function safeNext(raw: string | null): string {
@@ -16,14 +17,14 @@ export async function GET(request: Request) {
   // without a `code` — surface the real reason on /login instead of failing silently.
   const oauthError = searchParams.get("error_description") || searchParams.get("error");
   if (oauthError) {
-    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(oauthError)}`);
+    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(friendlyAuthMessage(oauthError))}`);
   }
 
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) return NextResponse.redirect(`${origin}${next}`);
-    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(error.message)}`);
+    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(friendlyAuthMessage(error.message))}`);
   }
 
   return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("This link is invalid or has expired.")}`);

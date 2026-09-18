@@ -500,9 +500,12 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
 
         // Server-enforced — this can genuinely fail (e.g. another tab spent the last credit in
         // the gap between the canExport check above and now), not just a local state update.
+        // Previously swallowed silently on failure (window closed, state reset, nothing shown) —
+        // a real credit race here left the user with no idea why the download just didn't happen.
         const { error } = await billing.consumeExportCredit(creditsNeeded);
         if (error) {
           downloadWindow?.close();
+          setDownloadError(error);
           setDownloadState("idle");
           downloadInFlightRef.current = false;
           return;

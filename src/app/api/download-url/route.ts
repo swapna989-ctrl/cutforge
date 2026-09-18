@@ -24,7 +24,10 @@ export async function GET(request: Request) {
       .eq("id", shortId)
       .eq("project_id", projectId)
       .maybeSingle();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      console.error("download-url lookup failed:", error);
+      return NextResponse.json({ error: "Something went wrong preparing this download. Please try again." }, { status: 500 });
+    }
     if (!short?.preview_frame_key || short.preview_frame_key === "__pending__") {
       return NextResponse.json({ error: "No preview frame yet" }, { status: 404 });
     }
@@ -42,7 +45,10 @@ export async function GET(request: Request) {
       .eq("id", shortId)
       .eq("project_id", projectId)
       .maybeSingle();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      console.error("download-url lookup failed:", error);
+      return NextResponse.json({ error: "Something went wrong preparing this download. Please try again." }, { status: 500 });
+    }
     if (!short?.thumbnail_key) return NextResponse.json({ error: "No thumbnail yet" }, { status: 404 });
     const downloadUrl = await getImagePreviewUrl(short.thumbnail_key);
     return NextResponse.json({ downloadUrl });
@@ -57,7 +63,10 @@ export async function GET(request: Request) {
       .eq("id", shortId)
       .eq("project_id", projectId)
       .maybeSingle();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      console.error("download-url lookup failed:", error);
+      return NextResponse.json({ error: "Something went wrong preparing this download. Please try again." }, { status: 500 });
+    }
     if (!short?.output_key) return NextResponse.json({ error: "This short isn't ready yet" }, { status: 404 });
 
     const baseName = (short.hook || `flovura-short-${short.position + 1}`)
@@ -73,7 +82,10 @@ export async function GET(request: Request) {
   // RLS (select_own_projects) already scopes this to the caller's own row — no extra
   // ownership check needed here.
   const { data: project, error } = await supabase.from("projects").select("output_key, name").eq("id", projectId).maybeSingle();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("download-url lookup failed:", error);
+    return NextResponse.json({ error: "Something went wrong preparing this download. Please try again." }, { status: 500 });
+  }
   if (!project?.output_key) return NextResponse.json({ error: "No finished master for this project yet" }, { status: 404 });
 
   // Base the download's filename on the project name (what the user actually recognizes it by)

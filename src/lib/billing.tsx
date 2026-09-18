@@ -16,6 +16,22 @@ type BillingData = {
   planRenewsAt: string | null;
 };
 
+/**
+ * Every raw error a billing RPC can throw, translated into something a real user can actually
+ * act on. buy_credit_pack/set_subscription_tier are special-cased entirely: they're locked to
+ * service_role now (see callBillingRpc's comment above buyCreditPack), so literally any error
+ * from them today just means "this isn't wired up to real payments yet" -- there's no business
+ * logic left to distinguish, since it never runs.
+ */
+function friendlyBillingError(fn: string, raw: string): string {
+  if (fn === "buy_credit_pack" || fn === "set_subscription_tier") {
+    return "This isn't available yet — we're finishing real payment support. Check back soon!";
+  }
+  if (raw === "No credits remaining") return "You're out of credits — buy more or upgrade your plan to keep clipping.";
+  if (raw === "No billing record for this user") return "Something's off with your account — please contact support.";
+  return "Something went wrong — please try again.";
+}
+
 const DEFAULT_DATA: BillingData = {
   freeCredits: 0,
   paidCredits: 0,
@@ -140,7 +156,7 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   async function callBillingRpc(fn: string, args?: Record<string, unknown>): Promise<{ error: string | null }> {
     const supabase = createClient();
     const { data: row, error } = await supabase.rpc(fn, args);
-    if (error) return { error: error.message };
+    if (error) return { error: friendlyBillingError(fn, error.message) };
     setState((prev) => ({ ...prev, data: mapRow(row as BillingRow) }));
     return { error: null };
   }
@@ -149,6 +165,12 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     return callBillingRpc("consume_export_credit", { credits_needed: creditsNeeded });
   }
 
+  // buy_credit_pack/set_subscription_tier are deliberately locked to service_role, not
+  // authenticated (0012_lock_billing_grant_rpcs.sql) -- both could grant paid credits/tiers with
+  // no payment check at all, so they can only safely run from a real payment webhook that's
+  // already verified a charge, which doesn't exist yet (this whole checkout is still labeled
+  // "(demo)" in the UI). Calling either from here always fails right now; friendlyBillingError
+  // turns that into an honest "not available yet" instead of a raw permission-denied error.
   function buyCreditPack(amount: number) {
     return callBillingRpc("buy_credit_pack", { amount });
   }
@@ -158,7 +180,11 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   }
 
   function cancelPlan() {
-    return callBillingRpc("set_subscription_tier", { new_tier: "none" });
+    // A dedicated, narrowly-scoped RPC (0024_safe_cancel_subscription.sql), not
+    // set_subscription_tier -- that one can also grant a paid tier with no payment check, so it's
+    // service_role-only (see buyCreditPack's comment). Canceling can only ever reduce a user's own
+    // plan, never grant anything, so it's safe to leave callable from the browser.
+    return callBillingRpc("cancel_my_subscription");
   }
 
   return (

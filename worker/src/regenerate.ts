@@ -15,6 +15,7 @@ import {
 import { transcribeCaptions, type CaptionChunk } from "./transcribe.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
 import { getProject, updateShort, chargeShortRegenerateCredit, type ShortRow } from "./supabase.js";
+import { toUserMessage } from "./errors.js";
 
 /** null on the short means "inherit the parent project's current default" — same nullable-override
  *  pattern as CaptionPresetSpec's fontOverride in ffmpeg.ts. */
@@ -118,8 +119,7 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
     await updateShort(short.id, patch);
   } catch (err) {
     console.error(`Regenerate failed for short ${short.id}:`, err);
-    const detail = err instanceof Error ? err.message : String(err);
-    await updateShort(short.id, { status: "ready", error_message: detail }).catch((updateErr) =>
+    await updateShort(short.id, { status: "ready", error_message: toUserMessage(err) }).catch((updateErr) =>
       console.error("Also failed to record the short's regenerate failure:", updateErr)
     );
   } finally {
