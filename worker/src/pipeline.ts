@@ -3,7 +3,8 @@ import { tmpdir, cpus, totalmem, freemem } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
-import { downloadFromUrl } from "./ytdlp.js";
+import { downloadFromUrl, fetchVideoInfo, type VideoInfo } from "./ytdlp.js";
+import { parseVideoUrl, PLATFORM_LABEL } from "./videoUrl.js";
 import {
   detectSilences,
   getDuration,
@@ -21,11 +22,11 @@ import {
 import { transcribeCaptions, transcribeSegments, type CaptionChunk } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
-import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, type ProjectRow } from "./supabase.js";
-import { toUserMessage } from "./errors.js";
+import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, getAvailableCredits, type ProjectRow } from "./supabase.js";
+import { toUserMessage, UserFacingError } from "./errors.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
-export const WORKER_BUILD = "2026-09-14-ai-clip-planner";
+export const WORKER_BUILD = "2026-09-19-link-ingestion";
 
 const MB = 1024 * 1024;
 
@@ -50,6 +51,51 @@ export function environmentReport(): string {
     `freemem=${Math.round(freemem() / MB)}MB`,
     `noderss=${Math.round(process.memoryUsage().rss / MB)}MB`,
   ].join(" ");
+}
+
+// Mirrors CREDIT_SECONDS in src/lib/pricing.ts and charge_project_credits in
+// supabase/migrations/0009_duration_scaled_credits.sql: 1 credit covers up to this much video.
+const CREDIT_SECONDS = 10 * 60;
+
+function formatLength(seconds: number): string {
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+/**
+ * Refuses a linked video that can't work *before* anything is downloaded -- a live stream, a clip
+ * that's too short, a 6-hour VOD, or one the owner can't afford. Downloading gigabytes just to
+ * find that out is the expensive way to learn it. This is only an early, advisory exit: the
+ * authoritative length and credit checks still run below against the file's real, measured duration.
+ */
+async function checkLinkedVideo(job: ProjectRow, info: VideoInfo): Promise<void> {
+  if (info.isLive) {
+    throw new UserFacingError("This is a live stream that hasn't finished yet. Paste the link again once it has ended, or upload a recording.");
+  }
+  const seconds = info.durationSeconds;
+  if (seconds == null) return;
+
+  // A couple of seconds of slack so a video that's a hair under the limit by the site's clock
+  // isn't refused here when the measured file would pass.
+  if (seconds + 2 < MIN_VIDEO_SECONDS) {
+    throw new UserFacingError(`This video is only ${formatLength(seconds)} long — Flovura needs at least 5 minutes of footage.`);
+  }
+  if (seconds - 2 > MAX_VIDEO_SECONDS) {
+    throw new UserFacingError(`This video is ${formatLength(seconds)} long — Flovura can process videos up to 3 hours.`);
+  }
+
+  const needed = Math.max(1, Math.ceil(seconds / CREDIT_SECONDS));
+  const available = await getAvailableCredits(job.user_id);
+  if (needed > available) {
+    throw new UserFacingError(
+      `Not enough credits — this ${Math.ceil(seconds / 60)}-minute video needs ${needed} credit${needed === 1 ? "" : "s"}, only ${available} available. Buy more or upgrade your plan to continue.`
+    );
+  }
 }
 
 export async function processJob(job: ProjectRow): Promise<void> {
@@ -96,8 +142,31 @@ export async function processJob(job: ProjectRow): Promise<void> {
         // uploaded file would be (same key pattern, same bucket) — everything from here on
         // (normalize, dead-air removal, transcription, clip planning) is completely unaware
         // whether the source arrived via upload or a link.
-        await updateJob(job.id, { status_message: "Downloading from link…", progress: 5 });
-        await downloadFromUrl(job.source_url, sourcePath);
+        // The link was written by the user's own browser, so it's re-validated here (the frontend
+        // check is just a courtesy) and rewritten to one canonical YouTube/Twitch form -- this is
+        // what stops the worker being pointed at an arbitrary address.
+        const link = parseVideoUrl(job.source_url);
+        if (!link.ok) throw new UserFacingError(link.message);
+        const platform = PLATFORM_LABEL[link.platform];
+
+        await updateJob(job.id, { status_message: `Checking your ${platform} link…`, progress: 3 });
+        const info = await fetchVideoInfo(link.url);
+        await checkLinkedVideo(job, info);
+        // Until now the project's name was just the pasted address; the real title is what the
+        // user recognizes on their dashboard.
+        if (info.title) await updateJob(job.id, { name: info.title.slice(0, 150) });
+
+        await updateJob(job.id, { status_message: `Downloading from ${platform}…`, progress: 5 });
+        let lastReportedPercent = 0;
+        let lastReportedAt = 0;
+        await downloadFromUrl(link.url, sourcePath, (percent) => {
+          const now = Date.now();
+          // Progress arrives many times a second; the database only needs a heartbeat.
+          if ((percent - lastReportedPercent < 5 && percent < 100) || now - lastReportedAt < 4000) return;
+          lastReportedPercent = percent;
+          lastReportedAt = now;
+          updateJob(job.id, { status_message: `Downloading from ${platform}… ${percent}%`, progress: 5 + Math.floor(percent * 0.03) }).catch(() => {});
+        });
 
         await updateJob(job.id, { status_message: "Saving source…", progress: 8 });
         const sourceKey = `${job.user_id}/source/${randomUUID()}.mp4`;

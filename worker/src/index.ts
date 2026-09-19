@@ -12,6 +12,7 @@ import { env } from "./env.js";
 import { claimNextJob, claimNextShortRegenerate, claimNextPreviewFrame } from "./supabase.js";
 import { processJob, environmentReport } from "./pipeline.js";
 import { regenerateShort, extractPreviewFrame } from "./regenerate.js";
+import { logYtDlpVersion, updateYtDlp } from "./ytdlp.js";
 
 let running = true;
 process.on("SIGTERM", () => {
@@ -56,6 +57,11 @@ async function tick(): Promise<void> {
 async function main() {
   console.log("Flovura worker started, polling every", env.POLL_INTERVAL_MS, "ms");
   console.log("[env]", environmentReport());
+  // YouTube changes its player every few weeks and an old yt-dlp stops working with it, while this
+  // binary is otherwise only refreshed when the worker is redeployed (see scripts/download-ytdlp.mjs).
+  // Updating on every boot keeps link downloads working between deploys. Non-fatal either way.
+  await updateYtDlp();
+  await logYtDlpVersion();
   while (running) {
     await tick();
     await new Promise((r) => setTimeout(r, env.POLL_INTERVAL_MS));

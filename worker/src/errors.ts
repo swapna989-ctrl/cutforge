@@ -1,3 +1,13 @@
+/** An error whose message is already written for the end user and safe to show as-is -- e.g. "this
+ *  video is private". toUserMessage passes these through untouched; anything else that isn't
+ *  recognized still collapses to the generic message, so raw stderr can never leak by accident. */
+export class UserFacingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UserFacingError";
+  }
+}
+
 /**
  * Turns a caught error into what actually reaches projects.error_message / shorts.error_message
  * — the one thing a real user sees when a render fails. ffmpeg/yt-dlp/Whisper failures carry raw
@@ -7,6 +17,8 @@
  * lost, it just doesn't leave the server.
  */
 export function toUserMessage(err: unknown): string {
+  if (err instanceof UserFacingError) return err.message;
+
   const raw = err instanceof Error ? err.message : String(err);
 
   // The one worker-thrown error with genuinely useful, safe-to-show specifics (the real minute

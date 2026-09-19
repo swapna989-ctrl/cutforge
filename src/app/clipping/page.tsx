@@ -9,6 +9,7 @@ import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 import { creditsForDuration } from "@/lib/pricing";
+import { parseVideoUrl, shortLabel } from "@/lib/videoUrl";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, type Project } from "@/lib/projects";
 import type { Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount, ClipLength } from "@/lib/pipeline";
@@ -232,6 +233,14 @@ export default function ClippingPage() {
       setUrlError("No YouTube/Twitch link or file selected — paste a link or choose a file to upload.");
       return;
     }
+    // Checked before anything is created (and before credits are even mentioned): a link that can
+    // never work -- a playlist, a channel page, a Twitch clip, some other site -- gets the reason
+    // now, instead of becoming a project that fails a minute later in the worker.
+    const link = parseVideoUrl(trimmed);
+    if (!link.ok) {
+      setUrlError(link.message);
+      return;
+    }
     setUrlError(null);
 
     if (!billing.ready || !billing.canExport) {
@@ -248,7 +257,7 @@ export default function ClippingPage() {
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
-    setPending({ kind: "url", label: trimmed, creditsEstimate: null, uploadDone: true, files: [] });
+    setPending({ kind: "url", label: link.url, creditsEstimate: null, uploadDone: true, files: [] });
   }
 
   /** The actual hand-off to the worker, for either kind of pending submission — deliberately the
@@ -300,7 +309,9 @@ export default function ClippingPage() {
         setProjects((prev) => [{ ...created, status: "draft" }, ...prev]);
       } else {
         const created = await createProject({
-          name: pending.label,
+          // Just the address for now -- the worker renames it to the video's real title as soon as
+          // it has looked the link up (see processJob's link branch).
+          name: shortLabel(pending.label),
           ratio: optionRatio,
           captionStyle: optionCaptionStyle,
           captionFont: optionCaptionFont,
@@ -592,7 +603,7 @@ export default function ClippingPage() {
            and then treats it identically to an uploaded file. Submitting either one opens the
            configure step above instead of queuing immediately. */
         <section className="mb-8 space-y-3">
-          <form onSubmit={handleUrlSubmit} className="space-y-3">
+          <form onSubmit={handleUrlSubmit} noValidate className="space-y-3">
             <div className="bg-white rounded-2xl p-2 pl-2.5 pr-2.5 border border-[#ECE5E6] shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] flex items-center gap-2.5">
               <input
                 ref={fileInputRef}

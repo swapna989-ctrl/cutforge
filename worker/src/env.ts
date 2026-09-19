@@ -24,4 +24,10 @@ export const env = {
   // confirm you're not a bot") for cloud hosts like Railway. Absent in local dev, where that
   // block hasn't been observed against a home IP.
   YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES?.trim() || null,
+  // Optional -- a proxy URL (http://user:pass@host:port) that YouTube requests are routed through.
+  // Cookies alone get past YouTube's bot check for now, but cloud IPs are what it distrusts, so this
+  // is the lever to pull if that stops being enough: a residential proxy makes the worker look like
+  // a home connection. Used for YouTube only (Twitch works from a datacenter, and residential
+  // proxies bill per gigabyte).
+  YTDLP_PROXY: process.env.YTDLP_PROXY?.trim() || null,
 };

@@ -95,6 +95,23 @@ export async function chargeProjectCredits(
   return { chargedCredits: row.charged_credits, watermarkFree: row.watermark_free };
 }
 
+/**
+ * How many credits this user could spend right now -- the same sum the frontend shows
+ * (billing.tsx's availableCredits): this cycle's plan allowance (only while a plan is active), plus
+ * paid, plus free. Read-only and advisory: used to refuse an obviously unaffordable link *before*
+ * downloading it. The real, authoritative charge is still chargeProjectCredits, which runs later
+ * against the measured duration.
+ */
+export async function getAvailableCredits(userId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("billing")
+    .select("free_credits, paid_credits, plan_tier, plan_credits")
+    .eq("user_id", userId)
+    .single();
+  if (error) throw new Error(error.message);
+  return (data.plan_tier !== "none" ? data.plan_credits : 0) + data.paid_credits + data.free_credits;
+}
+
 export type ProjectClipRow = {
   id: string;
   project_id: string;

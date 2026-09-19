@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "./env.js";
+import { UserFacingError } from "./errors.js";
 
 const ASSET_BY_PLATFORM: Record<string, string> = {
   win32: "yt-dlp.exe",
@@ -40,38 +41,52 @@ function resolveCookiesFilePath(): Promise<string | null> {
   return cookiesFilePathPromise;
 }
 
+// Everything downstream re-encodes to a 1280-long-edge, 30fps file (see ffmpeg.ts's SCALE_FILTER and
+// MEMORY_SAFE_X264), so anything above 720p is pure waste -- measured on a real 10-minute video:
+// normalizing the 1080p60 AV1 download YouTube's default pick gave took 723s, and Twitch's default
+// "Source" stream is 3x the bytes of its 720p one. Sort keys are priority order: resolution first
+// (closest to 720 without going over), then frame rate (30 if there's a choice, but never trading
+// resolution away for it), then H.264 (cheapest to decode) and AAC audio. `bv+ba` is separate
+// video+audio streams (YouTube); `b` is a single combined stream (Twitch, which has no video-only
+// formats, falls through to it).
+const FORMAT_ARGS = ["-f", "bv+ba/b", "-S", "res:720,fps:30,vcodec:h264,acodec:aac"];
+
 // Generous enough for a real slow-but-working download (the first request for a given video can
 // take several minutes — YouTube's own extraction/anti-bot overhead, confirmed against a real
 // video: ~90s+ cold, ~16s once yt-dlp's cache is warm) while still bounding the worst case. This
 // worker processes one job at a time, so a download that hangs for real (network stall, an
 // interactive prompt yt-dlp is silently waiting on) would otherwise block it forever.
 const DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
+const INFO_TIMEOUT_MS = 90 * 1000;
 
-async function runYtDlp(url: string, outputPath: string): Promise<void> {
-  const binaryPath = resolveBinaryPath();
+function isYouTube(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === "youtube.com" || host.endsWith(".youtube.com");
+  } catch {
+    return false;
+  }
+}
+
+/** Flags every yt-dlp call shares. */
+async function commonArgs(url: string): Promise<string[]> {
   const cookiesPath = await resolveCookiesFilePath();
   // Real diagnostic, not a guess — every past failure required inferring whether cookies were
   // even in play from indirect evidence (which error message came back). This says so directly.
   console.log(cookiesPath ? `[ytdlp] using cookies file at ${cookiesPath}` : "[ytdlp] YOUTUBE_COOKIES not configured — no cookies file");
 
   const args = [
-    url,
-    "-f",
-    // Modern YouTube extraction without a JS runtime (signature deciphering) only exposes
-    // separate video-only/audio-only streams — confirmed against a real download, where a
-    // combined-stream selector like "best[ext=mp4]" failed outright with "Requested format
-    // is not available". bestvideo+bestaudio asks yt-dlp to fetch both and mux them (via the
-    // bundled ffmpeg below) into one file, which works regardless of whether a combined
-    // stream exists. Capped at 1080p since everything downstream re-encodes down to 1280 on
-    // the long edge anyway (see ffmpeg.ts's SCALE_FILTER) — fetching more just wastes bandwidth.
-    "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-    "--merge-output-format",
-    "mp4",
-    "--ffmpeg-location",
-    ffmpegPath as string,
     "--no-playlist",
-    "-o",
-    outputPath,
+    // YouTube now needs a JavaScript runtime to solve its signature/throttling challenges; without
+    // one yt-dlp warns "extraction ... has been deprecated, and some formats may be missing".
+    // This worker is a Node process, so point yt-dlp at that same Node binary instead of relying on
+    // it being findable on PATH.
+    "--js-runtimes",
+    `node:${process.execPath}`,
+    "--socket-timeout",
+    "30",
+    "--retries",
+    "5",
   ];
   // Makes requests look like a logged-in browser session instead of an anonymous request from a
   // datacenter IP — without this, YouTube outright refuses cloud hosts with "Sign in to confirm
@@ -79,9 +94,208 @@ async function runYtDlp(url: string, outputPath: string): Promise<void> {
   // a home IP hasn't needed it.
   if (cookiesPath) args.push("--cookies", cookiesPath);
 
+  if (env.YTDLP_PROXY && isYouTube(url)) {
+    args.push("--proxy", env.YTDLP_PROXY);
+    // Host and port only -- the proxy URL carries a username and password.
+    let where = "configured proxy";
+    try {
+      where = new URL(env.YTDLP_PROXY).host;
+    } catch {
+      // Malformed value: yt-dlp will report it; nothing here should ever echo the raw string.
+    }
+    console.log(`[ytdlp] routing this YouTube request through proxy ${where}`);
+  }
+  return args;
+}
+
+type Captured = { stdout: string; stderr: string; code: number | null; timedOut: boolean };
+
+function runCapture(args: string[], timeoutMs: number): Promise<Captured> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(binaryPath, args, { timeout: DOWNLOAD_TIMEOUT_MS, killSignal: "SIGKILL" });
+    const proc = spawn(resolveBinaryPath(), args, { killSignal: "SIGKILL" });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGKILL");
+    }, timeoutMs);
+    proc.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
+    proc.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code, timedOut });
+    });
+  });
+}
+
+type Failure = { message: string; permanent: boolean };
+
+const permanent = (message: string): Failure => ({ message, permanent: true });
+
+/**
+ * Turns yt-dlp's raw stderr into something a user can act on, and says whether retrying could
+ * possibly help. Matched on the wording yt-dlp/YouTube/Twitch actually use; anything not
+ * recognized returns null and gets the generic message (never the raw text -- see errors.ts).
+ */
+export function explainYtDlpFailure(stderr: string): Failure | null {
+  const s = stderr.toLowerCase();
+
+  if (s.includes("private video") || s.includes("video is private")) {
+    return permanent("This video is private, so Flovura can't download it. Make it public or unlisted and try again, or upload the file.");
+  }
+  if (s.includes("members-only") || s.includes("members only") || s.includes("join this channel")) {
+    return permanent("This video is for channel members only, so Flovura can't download it. Upload the file instead.");
+  }
+  if (s.includes("subscriber") && s.includes("only")) {
+    return permanent("This broadcast is for subscribers only, so Flovura can't download it. Upload the file instead.");
+  }
+  if (s.includes("confirm your age") || s.includes("age-restricted") || s.includes("age restricted") || s.includes("inappropriate for some users")) {
+    return permanent("This video is age-restricted, so Flovura can't download it. Upload the file instead.");
+  }
+  if (s.includes("available in your country") || s.includes("blocked it in your country") || s.includes("blocked in your country")) {
+    return permanent("This video isn't available in the region our servers run in. Upload the file instead.");
+  }
+  if (s.includes("premieres in") || s.includes("live event will begin") || s.includes("this live event")) {
+    return permanent("This is a live event that hasn't finished yet. Paste the link again once it has ended, or upload a recording.");
+  }
+  if (
+    s.includes("video unavailable") ||
+    s.includes("has been removed") ||
+    s.includes("no longer available") ||
+    s.includes("content is unavailable") ||
+    s.includes("does not exist") ||
+    s.includes("http error 404")
+  ) {
+    return permanent("That video is unavailable — it may have been removed or made private. Check the link, or upload the file.");
+  }
+  if (s.includes("not a bot") || s.includes("sign in to confirm")) {
+    // Not the user's problem and not fixable by retrying right now: the cookies expired or this
+    // server's IP got flagged. Say so loudly in the logs where someone can act on it.
+    console.error("[ytdlp] YouTube bot check hit — the YOUTUBE_COOKIES are probably expired or this IP is flagged. Refresh the cookies.");
+    return permanent("YouTube is blocking automatic downloads from our servers for this video right now. Try again later, or download it yourself and upload the file.");
+  }
+  return null;
+}
+
+// What one full attempt costs us if it fails for a reason a newer yt-dlp might fix: YouTube changes
+// its player every few weeks and old yt-dlp builds stop extracting.
+function looksLikeStaleYtDlp(stderr: string): boolean {
+  const s = stderr.toLowerCase();
+  return (
+    s.includes("unable to extract") ||
+    s.includes("requested format is not available") ||
+    s.includes("nsig") ||
+    s.includes("signature") ||
+    s.includes("http error 403") ||
+    s.includes("please report this issue")
+  );
+}
+
+const GENERIC_DOWNLOAD_FAILURE = "We couldn't download that video. Check that the link opens in your browser, or upload the file instead.";
+
+export type VideoInfo = { title: string | null; durationSeconds: number | null; isLive: boolean };
+
+/**
+ * Asks yt-dlp what a link is (title, length, live or not) without downloading anything -- so a
+ * private video, a live stream, a 12-hour VOD, or one the owner can't afford is refused in
+ * seconds instead of after downloading gigabytes.
+ */
+export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
+  const result = await runCapture(
+    [url, "--skip-download", "--print", "%(.{title,duration,is_live,live_status})j", ...(await commonArgs(url))],
+    INFO_TIMEOUT_MS
+  );
+
+  if (result.code !== 0) {
+    console.error(`[ytdlp] info lookup failed (code ${result.code}${result.timedOut ? ", timed out" : ""}):`, result.stderr.trim().split("\n").slice(-6).join(" | "));
+    const known = explainYtDlpFailure(result.stderr);
+    if (known) throw new UserFacingError(known.message);
+    throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
+  }
+
+  const line = result.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+  try {
+    const parsed = JSON.parse(line) as { title?: string; duration?: number; is_live?: boolean; live_status?: string };
+    const live = parsed.is_live === true || parsed.live_status === "is_live" || parsed.live_status === "is_upcoming" || parsed.live_status === "post_live";
+    return {
+      title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : null,
+      durationSeconds: typeof parsed.duration === "number" ? parsed.duration : null,
+      isLive: live,
+    };
+  } catch {
+    // Unreadable output shouldn't block a download that would otherwise work -- just skip the
+    // up-front checks; the pipeline still enforces length and credits once the file is real.
+    console.error("[ytdlp] couldn't parse info output:", line.slice(0, 200));
+    return { title: null, durationSeconds: null, isLive: false };
+  }
+}
+
+/** Best-effort update of the standalone yt-dlp binary to the latest release. Non-fatal by design:
+ *  a failed update just means we keep running the version we already have. */
+export async function updateYtDlp(): Promise<void> {
+  try {
+    const result = await runCapture(["-U"], 2 * 60 * 1000);
+    const summary = (result.stdout + result.stderr).trim().split("\n").filter(Boolean).slice(-2).join(" | ");
+    console.log(`[ytdlp] update check: ${summary || `exit ${result.code}`}`);
+  } catch (err) {
+    console.error("[ytdlp] update check failed (continuing with the current version):", err instanceof Error ? err.message : err);
+  }
+}
+
+export async function logYtDlpVersion(): Promise<void> {
+  try {
+    const result = await runCapture(["--version"], 15_000);
+    console.log(`[ytdlp] version ${result.stdout.trim()}`);
+  } catch (err) {
+    console.error("[ytdlp] couldn't read version:", err instanceof Error ? err.message : err);
+  }
+}
+
+async function runYtDlp(url: string, outputPath: string, onProgress?: (percent: number) => void): Promise<void> {
+  const args = [
+    url,
+    ...FORMAT_ARGS,
+    "--merge-output-format",
+    "mp4",
+    "--ffmpeg-location",
+    ffmpegPath as string,
+    // One progress line per update instead of carriage-return overwrites, so it can be parsed --
+    // and so stdout is actually consumed below (an unread pipe that fills up stalls the process).
+    "--newline",
+    // Twitch VODs and YouTube's segmented streams download in fragments; fetching a few at once
+    // is the difference between minutes and tens of minutes for a long recording.
+    "--concurrent-fragments",
+    "4",
+    "--fragment-retries",
+    "10",
+    "-o",
+    outputPath,
+    ...(await commonArgs(url)),
+  ];
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(resolveBinaryPath(), args, { timeout: DOWNLOAD_TIMEOUT_MS, killSignal: "SIGKILL" });
     const stderrTail: string[] = [];
+    let bestPercent = 0;
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().split("\n")) {
+        const m = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
+        if (!m) continue;
+        // Video and audio download as separate streams, so the percentage restarts at 0 for the
+        // second one; only ever move forward so the reported progress never jumps backward.
+        const percent = Math.min(100, Math.floor(Number(m[1])));
+        if (percent > bestPercent) {
+          bestPercent = percent;
+          onProgress?.(percent);
+        }
+      }
+    });
     proc.stderr.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString().split("\n")) {
         if (!line.trim()) continue;
@@ -110,17 +324,21 @@ async function runYtDlp(url: string, outputPath: string): Promise<void> {
 }
 
 /**
- * Downloads a video from a YouTube/Twitch (or any other yt-dlp-supported) URL to a local file.
+ * Downloads a video from a (pre-validated -- see videoUrl.ts) YouTube/Twitch URL to a local file.
  * Uses the standalone yt-dlp binary fetched at install time (see scripts/download-ytdlp.mjs) —
  * no Python dependency, the same "-static" approach this project already uses for ffmpeg.
+ *
+ * Throws UserFacingError for anything a user can act on (private/removed/blocked); a failure it
+ * can't explain becomes the generic download message, with the real detail in the logs.
  */
-export async function downloadFromUrl(url: string, outputPath: string): Promise<void> {
+export async function downloadFromUrl(url: string, outputPath: string, onProgress?: (percent: number) => void): Promise<void> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
+  let updatedYtDlp = false;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await runYtDlp(url, outputPath);
+      await runYtDlp(url, outputPath, onProgress);
 
       // yt-dlp exiting 0 doesn't guarantee a real, complete file landed (seen with geo-restricted
       // or partially-available sources) — check for real bytes rather than trusting exit code alone.
@@ -132,12 +350,25 @@ export async function downloadFromUrl(url: string, outputPath: string): Promise<
       return;
     } catch (err) {
       lastError = err;
-      console.error(`yt-dlp download attempt ${attempt}/${MAX_ATTEMPTS} failed:`, err instanceof Error ? err.message : err);
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(`yt-dlp download attempt ${attempt}/${MAX_ATTEMPTS} failed:`, detail);
+
+      const known = explainYtDlpFailure(detail);
+      if (known?.permanent) throw new UserFacingError(known.message);
+
+      // A player change on YouTube's side breaks old yt-dlp builds; one update-and-retry is cheap
+      // and is what actually fixes that class of failure.
+      if (!updatedYtDlp && looksLikeStaleYtDlp(detail)) {
+        updatedYtDlp = true;
+        console.log("[ytdlp] failure looks like an outdated yt-dlp — updating before retrying");
+        await updateYtDlp();
+        continue;
+      }
+
       if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, attempt * 3000));
     }
   }
 
-  throw new Error(
-    `Failed to download ${url} after ${MAX_ATTEMPTS} attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`
-  );
+  console.error(`Failed to download ${url} after ${MAX_ATTEMPTS} attempts:`, lastError instanceof Error ? lastError.message : String(lastError));
+  throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
 }
