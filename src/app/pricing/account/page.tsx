@@ -13,6 +13,7 @@ import {
   TIER_FEATURES,
   CREDIT_PACKS,
   CREDIT_SECONDS,
+  canBuyCreditPacks,
   creditsToMinutes,
   formatMinutes,
   type BillingCycle,
@@ -192,12 +193,14 @@ export default function PricingPage() {
         </div>
       </section>
 
+      {/* Subscribers only -- a free-tier account never sees these (see canBuyCreditPacks). */}
+      {canBuyCreditPacks(billing.planTier) && (
       <section>
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Credit packs</h2>
         <p className="text-xs text-[#7B7579] mb-6 text-center max-w-md mx-auto">
-          One-time purchase, no auto-renewal — a way to keep clipping past your plan&apos;s monthly allowance, or without a subscription at
-          all. Submitting a video uses credits in proportion to its real length (1 credit ≈ {CREDIT_SECONDS / 60} min) and unlocks as many
-          AI-planned shorts as your footage supports, watermark-free.
+          One-time purchase, no auto-renewal — a top-up for when you run past your plan&apos;s monthly allowance. Submitting a video uses
+          credits in proportion to its real length (1 credit ≈ {CREDIT_SECONDS / 60} min) and unlocks as many AI-planned shorts as your
+          footage supports, watermark-free.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-4xl mx-auto">
           {CREDIT_PACKS.map((pack) => {
@@ -215,7 +218,7 @@ export default function PricingPage() {
                 <span className={`${playfair.className} text-3xl font-semibold text-[#1d1b1e] mt-2`}>{pack.credits}</span>
                 <span className="text-xs text-[#7B7579] uppercase tracking-wide">credits</span>
                 <span className="text-[11px] text-[#B3ACA6] mb-4">≈ {formatMinutes(creditsToMinutes(pack.credits))} of video</span>
-                <span className="text-2xl font-semibold text-[#9a4153] mb-5">₹{pack.price}</span>
+                <span className="text-2xl font-semibold text-[#9a4153] mb-5">₹{pack.price.toLocaleString("en-IN")}</span>
                 <button
                   onClick={() => handleBuyPack(key, pack.credits)}
                   className="mt-auto py-2.5 rounded-full text-xs font-semibold bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 cursor-pointer"
@@ -227,6 +230,7 @@ export default function PricingPage() {
           })}
         </div>
       </section>
+      )}
     </DashboardShell>
   );
 }

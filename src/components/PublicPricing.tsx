@@ -9,7 +9,6 @@ import {
   TIER_LABEL,
   TIER_BLURB,
   TIER_FEATURES,
-  CREDIT_PACKS,
   CREDIT_SECONDS,
   creditsToMinutes,
   formatMinutes,
@@ -22,9 +21,10 @@ const CARD_SHADOW = "shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_
 const CTA_CLASS =
   "mt-auto py-2.5 rounded-full text-xs font-semibold bg-[#ed8395] text-white shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150";
 
-/** The full price list for anonymous visitors. Same numbers/features as the signed-in page (both
- *  read lib/pricing.ts), but no purchase actions -- real payments aren't connected yet, so every
- *  card leads to sign-up instead of a checkout that can't complete. */
+/** The plan list for anonymous visitors. Same numbers/features as the signed-in page (both read
+ *  lib/pricing.ts), but no purchase actions -- real payments aren't connected yet, so every card
+ *  leads to sign-up instead of a checkout that can't complete. Credit packs are deliberately absent:
+ *  they're only sold to subscribers (see canBuyCreditPacks), and a visitor isn't one. */
 export default function PublicPricing() {
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
@@ -36,10 +36,10 @@ export default function PublicPricing() {
           Prices in INR, inclusive of 18% GST. Every plan clips watermark-free, and every new account starts with 1 free credit — no card
           required.
         </p>
-        <p className="text-xs text-[#B3ACA6] mt-2">Paid plans and credit packs are launching soon.</p>
+        <p className="text-xs text-[#B3ACA6] mt-2">Paid plans are launching soon.</p>
       </div>
 
-      <section className="mb-16">
+      <section>
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Subscriptions</h2>
         <p className="text-xs text-[#7B7579] mb-5 text-center max-w-md mx-auto">
           A monthly allowance of source-video minutes to clip — submitting a video uses minutes in proportion to its real length and
@@ -118,35 +118,6 @@ export default function PublicPricing() {
               </div>
             );
           })}
-        </div>
-      </section>
-
-      <section>
-        <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Credit packs</h2>
-        <p className="text-xs text-[#7B7579] mb-6 text-center max-w-md mx-auto">
-          One-time purchase, no auto-renewal — a way to keep clipping past a plan&apos;s monthly allowance, or without a subscription at
-          all. 1 credit ≈ {CREDIT_SECONDS / 60} min of source video.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-4xl mx-auto">
-          {CREDIT_PACKS.map((pack) => (
-            <div
-              key={pack.credits}
-              className={`bg-white border border-[#ECE5E6] rounded-3xl p-6 flex flex-col text-center relative ${CARD_SHADOW}`}
-            >
-              {pack.badge && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[10px] tracking-wide font-semibold uppercase whitespace-nowrap">
-                  {pack.badge}
-                </span>
-              )}
-              <span className={`${playfair.className} text-3xl font-semibold text-[#1d1b1e] mt-2`}>{pack.credits}</span>
-              <span className="text-xs text-[#7B7579] uppercase tracking-wide">credits</span>
-              <span className="text-[11px] text-[#B3ACA6] mb-4">≈ {formatMinutes(creditsToMinutes(pack.credits))} of video</span>
-              <span className="text-2xl font-semibold text-[#9a4153] mb-5">₹{pack.price}</span>
-              <Link href="/signup" className={CTA_CLASS}>
-                Get started free
-              </Link>
-            </div>
-          ))}
         </div>
       </section>
     </>

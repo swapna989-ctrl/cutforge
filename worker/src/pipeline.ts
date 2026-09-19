@@ -93,7 +93,7 @@ async function checkLinkedVideo(job: ProjectRow, info: VideoInfo): Promise<void>
   const available = await getAvailableCredits(job.user_id);
   if (needed > available) {
     throw new UserFacingError(
-      `Not enough credits — this ${Math.ceil(seconds / 60)}-minute video needs ${needed} credit${needed === 1 ? "" : "s"}, only ${available} available. Buy more or upgrade your plan to continue.`
+      `Not enough credits — this ${Math.ceil(seconds / 60)}-minute video needs ${needed} credit${needed === 1 ? "" : "s"}, only ${available} available. Head to Pricing to get more credits and continue.`
     );
   }
 }

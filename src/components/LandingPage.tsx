@@ -275,11 +275,9 @@ export default function LandingPage() {
             })}
           </div>
           <p className="text-center text-xs text-[#B3ACA6] mt-8">
-            Credit packs are also available for one-off use, no subscription required —{" "}
             <Link href="/pricing" className="text-[#9a4153] underline underline-offset-2 hover:text-[#1d1b1e]">
-              see full pricing
+              See full pricing
             </Link>
-            .
           </p>
         </section>
 

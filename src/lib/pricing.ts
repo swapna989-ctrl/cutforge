@@ -1,6 +1,8 @@
 // The one place tier numbers live — mirrors plan_tier_config in
-// supabase/migrations/0008_tiered_billing.sql (the DB is what actually enforces credits/rollover;
-// this is just so the UI can display the same numbers without hardcoding them a second time).
+// supabase/migrations/0008_tiered_billing.sql, as last set by 0025_starter_10_credits.sql (the DB is
+// what actually enforces credits/rollover; this is just so the UI can display the same numbers
+// without hardcoding them a second time). Change a monthlyCredits or rolloverCap value here and it
+// needs a new migration updating plan_tier_config to match.
 export type PlanTier = "none" | "starter" | "creator" | "agency";
 export type BillingCycle = "monthly" | "yearly";
 
@@ -18,7 +20,7 @@ export const TIER_CONFIG: Record<Exclude<PlanTier, "none">, {
   priceYearlyPerMonth: number;
   priceYearlyTotal: number;
 }> = {
-  starter: { monthlyCredits: 15, rolloverCap: 0, priceMonthly: 499, priceYearlyPerMonth: 349, priceYearlyTotal: 4188 },
+  starter: { monthlyCredits: 10, rolloverCap: 0, priceMonthly: 499, priceYearlyPerMonth: 349, priceYearlyTotal: 4188 },
   creator: { monthlyCredits: 45, rolloverCap: 90, priceMonthly: 1299, priceYearlyPerMonth: 909, priceYearlyTotal: 10908 },
   agency: { monthlyCredits: 120, rolloverCap: 240, priceMonthly: 2999, priceYearlyPerMonth: 2099, priceYearlyTotal: 25188 },
 };
@@ -31,13 +33,22 @@ export const TIER_BLURB: Record<Exclude<PlanTier, "none">, string> = {
   agency: "For teams clipping at volume across clients.",
 };
 
+/** "4.5x" / "~2.7x" — how many times bigger one tier's monthly allowance is than another's. Derived
+ *  from TIER_CONFIG so the feature bullets below can't drift from the real credit counts. */
+function allowanceRatio(bigger: Exclude<PlanTier, "none">, smaller: Exclude<PlanTier, "none">): string {
+  const ratio = TIER_CONFIG[bigger].monthlyCredits / TIER_CONFIG[smaller].monthlyCredits;
+  const tenths = Math.round(ratio * 10);
+  const exact = Math.abs(ratio * 10 - tenths) < 1e-9;
+  return `${exact ? "" : "~"}${tenths / 10}x`;
+}
+
 // Real features only — no priority processing, per-clip editing, automations, API/MCP access,
 // team seats, or social scheduling, since none of those exist in Flovura yet. Shared by the
 // public landing page and the in-app pricing page so the two can never list different things.
 export const TIER_FEATURES: Record<Exclude<PlanTier, "none">, string[]> = {
   starter: ["AI clip planning + viral score", "Kinetic auto-captions", "Vertical & horizontal crop", "No watermark"],
-  creator: ["Everything in Starter", "3x Starter's monthly minutes", "Rollover up to 2x unused credits"],
-  agency: ["Everything in Creator", "~2.7x Creator's monthly minutes", "Rollover up to 2x unused credits"],
+  creator: ["Everything in Starter", `${allowanceRatio("creator", "starter")} Starter's monthly minutes`, "Rollover up to 2x unused credits"],
+  agency: ["Everything in Creator", `${allowanceRatio("agency", "creator")} Creator's monthly minutes`, "Rollover up to 2x unused credits"],
 };
 
 // 1 credit = up to this many seconds of source video — mirrors charge_project_credits() in
@@ -62,10 +73,25 @@ export function formatMinutes(minutes: number): string {
   return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hrs`;
 }
 
-/** One-off credit packs (no subscription). Shared by the public /pricing page and the in-app one
- *  for the same reason TIER_FEATURES is: the two pages can never list different numbers. */
+/** One-time credit packs, a premium top-up for people who are already subscribed. The in-app pricing
+ *  page and checkout read this list so the numbers can't differ; see canBuyCreditPacks for who's
+ *  allowed to see and buy them. */
 export const CREDIT_PACKS: { credits: number; price: number; badge?: string }[] = [
-  { credits: 10, price: 149 },
-  { credits: 30, price: 349 },
-  { credits: 100, price: 899, badge: "Best value per credit" },
+  { credits: 10, price: 599 },
+  { credits: 30, price: 1499 },
+  { credits: 100, price: 3999, badge: "Best value per credit" },
 ];
+
+/** Packs are only sold to someone on an active paid plan (any tier, monthly or yearly), never to a
+ *  free-tier account, so they top up a subscription instead of replacing it. Every place that shows
+ *  or sells a pack has to go through this, and so does the code that grants one: the database
+ *  refuses it too (buy_credit_pack, supabase/migrations/0026_credit_packs_require_plan.sql). */
+export function canBuyCreditPacks(planTier: PlanTier): boolean {
+  return planTier !== "none";
+}
+
+/** What to tell someone who's out of credits: a free-tier user is only ever pointed at plans,
+ *  since packs aren't sold to them. Reads as the end of a sentence, e.g. "…— subscribe to a plan." */
+export function getMoreCreditsHint(planTier: PlanTier): string {
+  return canBuyCreditPacks(planTier) ? "add a credit pack or upgrade your plan" : "subscribe to a plan";
+}

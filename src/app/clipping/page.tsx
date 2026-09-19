@@ -8,7 +8,7 @@ import ProjectCard from "@/components/ProjectCard";
 import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
-import { creditsForDuration } from "@/lib/pricing";
+import { creditsForDuration, getMoreCreditsHint } from "@/lib/pricing";
 import { parseVideoUrl, shortLabel } from "@/lib/videoUrl";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, type Project } from "@/lib/projects";
@@ -158,7 +158,7 @@ export default function ClippingPage() {
     }
 
     if (!billing.ready || !billing.canExport) {
-      setFileUploadError("You're out of credits — buy more or subscribe to keep clipping.");
+      setFileUploadError(`You're out of credits — ${getMoreCreditsHint(billing.planTier)} to keep clipping.`);
       setUploadingFiles(false);
       return;
     }
@@ -173,7 +173,7 @@ export default function ClippingPage() {
       creditsNeeded = creditsForDuration(totalSeconds);
       if (creditsNeeded > billing.availableCredits) {
         setFileUploadError(
-          `This video needs ${creditsNeeded} credits (you have ${billing.availableCredits}) — buy more or upgrade your plan.`
+          `This video needs ${creditsNeeded} credits (you have ${billing.availableCredits}) — ${getMoreCreditsHint(billing.planTier)}.`
         );
         setUploadingFiles(false);
         return;
@@ -244,7 +244,7 @@ export default function ClippingPage() {
     setUrlError(null);
 
     if (!billing.ready || !billing.canExport) {
-      setUrlError("You're out of credits — buy more or subscribe to keep clipping.");
+      setUrlError(`You're out of credits — ${getMoreCreditsHint(billing.planTier)} to keep clipping.`);
       return;
     }
 

@@ -6,6 +6,7 @@ import DashboardShell from "@/components/DashboardShell";
 import CropTool from "@/components/CropTool";
 import { useRequireAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
+import { getMoreCreditsHint } from "@/lib/pricing";
 import { getShort, getProject, updateShort, type Short, type Project } from "@/lib/projects";
 import type { Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount } from "@/lib/pipeline";
 import { CAPTION_STYLE_OPTIONS, CAPTION_FONT_OPTIONS, CAPTION_POSITION_OPTIONS, CAPTION_LINE_COUNT_OPTIONS, CaptionPreview } from "@/lib/captionOptions";
@@ -426,7 +427,7 @@ function EditShortPageInner() {
               )}
 
               {regenerateError && <p className="text-xs text-[#B0503E]">{regenerateError}</p>}
-              {!canAfford && <p className="text-xs text-[#B0503E]">You&apos;re out of credits — buy more or subscribe to keep editing.</p>}
+              {!canAfford && <p className="text-xs text-[#B0503E]">You&apos;re out of credits — {getMoreCreditsHint(billing.planTier)} to keep editing.</p>}
 
               <button
                 type="button"

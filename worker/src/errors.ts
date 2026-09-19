@@ -27,7 +27,7 @@ export function toUserMessage(err: unknown): string {
   // one honest, generic message instead of guessing at which raw text might be safe to show.
   if (raw.startsWith("INSUFFICIENT_CREDITS:")) {
     const detail = raw.slice("INSUFFICIENT_CREDITS:".length).trim();
-    return `Not enough credits — ${detail}. Buy more or upgrade your plan to continue.`;
+    return `Not enough credits — ${detail}. Head to Pricing to get more credits and continue.`;
   }
 
   return "Something went wrong while processing this video. Please try again — if it keeps happening, contact support.";

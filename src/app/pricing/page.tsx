@@ -10,7 +10,7 @@ const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], 
 export const metadata: Metadata = {
   title: "Pricing — Flovura",
   description:
-    "Flovura pricing: monthly plans from ₹499 and one-off credit packs for turning long videos into AI-planned shorts, watermark-free. Start with a free credit.",
+    "Flovura pricing: monthly plans from ₹499 for turning long videos into AI-planned shorts, watermark-free. Start with a free credit.",
   alternates: { canonical: "/pricing" },
 };
 

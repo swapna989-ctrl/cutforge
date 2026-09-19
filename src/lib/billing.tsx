@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/client";
-import type { PlanTier, BillingCycle } from "@/lib/pricing";
+import { canBuyCreditPacks, type PlanTier, type BillingCycle } from "@/lib/pricing";
 
 export type { PlanTier, BillingCycle };
 
@@ -27,7 +27,7 @@ function friendlyBillingError(fn: string, raw: string): string {
   if (fn === "buy_credit_pack" || fn === "set_subscription_tier") {
     return "This isn't available yet — we're finishing real payment support. Check back soon!";
   }
-  if (raw === "No credits remaining") return "You're out of credits — buy more or upgrade your plan to keep clipping.";
+  if (raw === "No credits remaining") return "You're out of credits — head to Pricing to get more and keep clipping.";
   if (raw === "No billing record for this user") return "Something's off with your account — please contact support.";
   return "Something went wrong — please try again.";
 }
@@ -172,6 +172,12 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   // "(demo)" in the UI). Calling either from here always fails right now; friendlyBillingError
   // turns that into an honest "not available yet" instead of a raw permission-denied error.
   function buyCreditPack(amount: number) {
+    // Packs are only sold to subscribers. The pricing page already hides them from everyone else, so
+    // this only fires from a stale tab (e.g. the plan was cancelled after the page loaded); the
+    // database refuses it as well, this just answers in plain words first.
+    if (!canBuyCreditPacks(data.planTier)) {
+      return Promise.resolve({ error: "Credit packs are available on an active plan — pick a plan first." });
+    }
     return callBillingRpc("buy_credit_pack", { amount });
   }
 
