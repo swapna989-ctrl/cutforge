@@ -7,6 +7,7 @@ const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], 
 export const metadata = {
   title: "Privacy Policy — Flovura",
   description: "How Flovura collects, uses, and protects your data.",
+  alternates: { canonical: "/privacy" },
 };
 
 export default function PrivacyPage() {

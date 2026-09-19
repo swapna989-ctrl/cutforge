@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans, Inter, JetBrains_Mono } from "next/font/google";
 import { AuthProvider } from "@/lib/auth";
 import { PrefsProvider } from "@/lib/prefs";
 import { BillingProvider } from "@/lib/billing";
+import { SITE_URL } from "@/lib/siteUrl";
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -23,10 +24,18 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ["400", "500"],
 });
 
+const TITLE = "Flovura — AI clips from your long-form video";
+const DESCRIPTION =
+  "Drop in a video or paste a link. Flovura finds the strongest moments, plans multiple clips with a viral score, and burns in captions — ready to post.";
+
 export const metadata: Metadata = {
-  title: "Flovura — AI clips from your long-form video",
-  description:
-    "Drop in a video or paste a link. Flovura finds the strongest moments, plans multiple clips with a viral score, and burns in captions — ready to post.",
+  // Makes every relative metadata URL (canonicals, social-preview links) resolve to the real
+  // domain rather than whatever internal address the server happens to see.
+  metadataBase: new URL(SITE_URL),
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: { type: "website", siteName: "Flovura", title: TITLE, description: DESCRIPTION },
+  twitter: { card: "summary", title: TITLE, description: DESCRIPTION },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

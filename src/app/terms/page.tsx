@@ -7,6 +7,7 @@ const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], 
 export const metadata = {
   title: "Terms of Service — Flovura",
   description: "The terms that govern your use of Flovura.",
+  alternates: { canonical: "/terms" },
 };
 
 export default function TermsPage() {
