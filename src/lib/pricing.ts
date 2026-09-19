@@ -61,3 +61,11 @@ export function formatMinutes(minutes: number): string {
   const hours = minutes / 60;
   return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hrs`;
 }
+
+/** One-off credit packs (no subscription). Shared by the public /pricing page and the in-app one
+ *  for the same reason TIER_FEATURES is: the two pages can never list different numbers. */
+export const CREDIT_PACKS: { credits: number; price: number; badge?: string }[] = [
+  { credits: 10, price: 149 },
+  { credits: 30, price: 349 },
+  { credits: 100, price: 899, badge: "Best value per credit" },
+];

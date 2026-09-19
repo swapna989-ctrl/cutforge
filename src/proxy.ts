@@ -34,6 +34,17 @@ export async function proxy(request: NextRequest) {
     return redirect;
   }
 
+  // /pricing is public (so Google can read it), but signed-in users need the in-app version with
+  // their balance and plan controls. A rewrite -- not a redirect -- keeps the URL as /pricing, so
+  // every existing in-app link to it keeps working and nothing visibly changes for them.
+  if (user && request.nextUrl.pathname === "/pricing") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/pricing/account";
+    const rewritten = NextResponse.rewrite(url, { request });
+    response.cookies.getAll().forEach((cookie) => rewritten.cookies.set(cookie));
+    return rewritten;
+  }
+
   return response;
 }
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { Playfair_Display } from "next/font/google";
+import PublicFooter from "@/components/PublicFooter";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
@@ -12,7 +13,7 @@ export const metadata = {
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-[#FAF8F7]">
+    <div className="min-h-screen bg-[#FAF8F7] flex flex-col">
       <header className="border-b border-[#ECE5E6] bg-white">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 h-16 flex items-center">
           <Link href="/" className="flex items-center gap-2">
@@ -22,7 +23,7 @@ export default function PrivacyPage() {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 py-12">
+      <main className="flex-1 w-full max-w-2xl mx-auto px-4 sm:px-6 py-12">
         <h1 className={`${playfair.className} text-2xl sm:text-3xl font-semibold text-[#1d1b1e] tracking-tight mb-2`}>Privacy Policy</h1>
         <p className="text-xs text-[#B3ACA6] mb-10">Last updated September 18, 2026</p>
 
@@ -112,6 +113,8 @@ export default function PrivacyPage() {
           </section>
         </div>
       </main>
+
+      <PublicFooter />
     </div>
   );
 }

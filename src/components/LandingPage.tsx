@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Playfair_Display } from "next/font/google";
+import PublicFooter from "@/components/PublicFooter";
 import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, TIER_BLURB, TIER_FEATURES, CREDIT_SECONDS, creditsToMinutes, formatMinutes } from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
@@ -274,7 +275,11 @@ export default function LandingPage() {
             })}
           </div>
           <p className="text-center text-xs text-[#B3ACA6] mt-8">
-            Credit packs are also available for one-off use, no subscription required — see full pricing once you&apos;re signed in.
+            Credit packs are also available for one-off use, no subscription required —{" "}
+            <Link href="/pricing" className="text-[#9a4153] underline underline-offset-2 hover:text-[#1d1b1e]">
+              see full pricing
+            </Link>
+            .
           </p>
         </section>
 
@@ -310,26 +315,7 @@ export default function LandingPage() {
         </section>
       </main>
 
-      <footer className="border-t border-[#ECE5E6]">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Image src="/brand/logo.png" alt="" width={22} height={22} className="w-[22px] h-[22px] rounded-md object-cover" />
-            <span className={`${playfair.className} text-sm font-semibold text-[#9a4153]`}>Flovura</span>
-            <span className="text-xs text-[#B3ACA6]">© {new Date().getFullYear()}</span>
-          </div>
-          <div className="flex items-center gap-6">
-            <a href="#features" className="text-xs text-[#7B7579] hover:text-[#1d1b1e] transition-colors">
-              Features
-            </a>
-            <a href="#pricing" className="text-xs text-[#7B7579] hover:text-[#1d1b1e] transition-colors">
-              Pricing
-            </a>
-            <Link href="/login" className="text-xs text-[#7B7579] hover:text-[#1d1b1e] transition-colors">
-              Sign in
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   );
 }

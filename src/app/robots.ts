@@ -8,7 +8,7 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       // Signed-in app screens and internal endpoints: nothing useful for a crawler to index
       // (they just bounce anonymous visitors to /login).
-      disallow: ["/api/", "/auth/", "/dashboard", "/clipping", "/workspace", "/settings", "/shorts/", "/pricing"],
+      disallow: ["/api/", "/auth/", "/dashboard", "/clipping", "/workspace", "/settings", "/shorts/", "/pricing/account"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
   };

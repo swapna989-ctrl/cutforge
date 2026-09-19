@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import LandingPage from "@/components/LandingPage";
 import { SITE_URL } from "@/lib/siteUrl";
+import { SOCIAL_LINKS } from "@/lib/social";
 
 export const metadata: Metadata = {
   alternates: { canonical: "/" },
@@ -24,6 +25,7 @@ const jsonLd = {
       name: "Flovura",
       url: `${SITE_URL}/`,
       logo: `${SITE_URL}/icon.png`,
+      sameAs: SOCIAL_LINKS.map((social) => social.href),
     },
   ],
 };
