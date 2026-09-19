@@ -24,6 +24,12 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+// The bare flovuraai.com apex is only a GoDaddy forward to www, not the real site; anything that
+// gets emailed or redirected back to the app should point at www directly.
+function appOrigin(): string {
+  return window.location.origin === "https://flovuraai.com" ? "https://www.flovuraai.com" : window.location.origin;
+}
+
 function mapUser(u: SupabaseUser | null | undefined): AuthUser | null {
   if (!u) return null;
   const name = (u.user_metadata?.full_name as string | undefined) || u.email?.split("@")[0] || "there";
@@ -82,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // loaded the login page from the bare domain would get redirected back to it after a
     // successful Google sign-in and land on a browser-level connection error. Normalized only for
     // that one specific origin; localhost and www are untouched, so local dev testing still works.
-    const origin = window.location.origin === "https://flovuraai.com" ? "https://www.flovuraai.com" : window.location.origin;
+    const origin = appOrigin();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${origin}/auth/callback` },
@@ -115,7 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function resetPasswordForEmail(email: string) {
     const supabase = createClient();
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+      redirectTo: `${appOrigin()}/auth/callback?next=/reset-password`,
     });
     return { error: error ? friendlyAuthMessage(error.message) : null };
   }

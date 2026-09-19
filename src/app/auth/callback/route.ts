@@ -8,8 +8,22 @@ function safeNext(raw: string | null): string {
   return "/dashboard";
 }
 
+// Behind Railway's proxy the app listens on an internal port, and `new URL(request.url).origin`
+// reports that internal address (confirmed against production: this route was answering with
+// `location: https://localhost:8080/...`). Every post-login redirect built from it sent real users
+// to a dead localhost page *after* the session had already been created -- the sign-in succeeded
+// (Supabase logs showed it, and going back landed them signed in), then the browser was sent
+// somewhere unreachable. So production uses the real domain; local dev keeps the request's own
+// origin so http://localhost:3000 sign-in testing still works.
+const PRODUCTION_ORIGIN = "https://www.flovuraai.com";
+
+function publicOrigin(requestUrl: string): string {
+  return process.env.NODE_ENV === "production" ? PRODUCTION_ORIGIN : new URL(requestUrl).origin;
+}
+
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  const origin = publicOrigin(request.url);
   const code = searchParams.get("code");
   const next = safeNext(searchParams.get("next"));
 
