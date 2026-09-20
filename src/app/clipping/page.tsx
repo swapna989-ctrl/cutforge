@@ -651,13 +651,7 @@ export default function ClippingPage() {
             >
               <span className="material-symbols-outlined text-[18px]">content_cut</span>
               <span>
-                {billing.ready
-                  ? `Get Clips · ${
-                      billing.hasActivePlan && billing.planCredits > 0
-                        ? `${billing.planCredits} left`
-                        : `${billing.freeCredits + billing.paidCredits} left`
-                    }`
-                  : "Get Clips"}
+                {billing.ready ? `Get Clips · ${billing.availableCredits} left` : "Get Clips"}
               </span>
             </button>
           </form>
@@ -704,7 +698,9 @@ export default function ClippingPage() {
         {billing.ready && (
           <span className="text-sm text-[#7B7579]">
             {billing.hasActivePlan
-              ? `${billing.planCredits} credit${billing.planCredits === 1 ? "" : "s"} left this month`
+              ? billing.availableCredits === billing.planCredits
+                ? `${billing.planCredits} credit${billing.planCredits === 1 ? "" : "s"} left this month`
+                : `${billing.availableCredits} credits left · ${billing.planCredits} from your plan this month`
               : billing.paidCredits > 0
                 ? `${billing.freeCredits + billing.paidCredits} credits left`
                 : `${billing.freeCredits}/${FREE_CREDITS_GRANT} credits left`}

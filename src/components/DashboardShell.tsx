@@ -12,9 +12,18 @@ import { TIER_LABEL } from "@/lib/pricing";
  */
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const billing = useBilling();
+  // The total that can actually be spent: this month's plan credits first, then pack credits, then
+  // free ones. Showing only the plan's share hid anything bought as a pack.
   const creditsLabel = billing.hasActivePlan
-    ? `${TIER_LABEL[billing.planTier]} · ${billing.planCredits} left`
-    : `${billing.freeCredits + billing.paidCredits} credits`;
+    ? `${TIER_LABEL[billing.planTier]} · ${billing.availableCredits} left`
+    : `${billing.availableCredits} credits`;
+  const creditsBreakdown = [
+    billing.hasActivePlan ? `${billing.planCredits} from your plan this month` : null,
+    billing.paidCredits > 0 ? `${billing.paidCredits} from credit packs` : null,
+    billing.freeCredits > 0 ? `${billing.freeCredits} free` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="min-h-screen bg-[#FAF8F7]">
@@ -28,6 +37,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           {billing.ready && (
             <Link
               href="/pricing"
+              title={creditsBreakdown || undefined}
               className="hidden sm:flex items-center gap-1.5 bg-[#fdd5e1]/60 border border-[#ECE5E6] px-3 py-1.5 rounded-full text-xs font-semibold text-[#9a4153] hover:bg-[#fdd5e1] transition-colors"
             >
               <span className="material-symbols-outlined text-[15px]">auto_fix_high</span>
