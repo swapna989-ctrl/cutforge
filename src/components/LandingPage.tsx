@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Playfair_Display } from "next/font/google";
 import PublicFooter from "@/components/PublicFooter";
-import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, TIER_BLURB, TIER_FEATURES, CREDIT_SECONDS, creditsToMinutes, formatMinutes } from "@/lib/pricing";
+import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, TIER_BLURB, TIER_FEATURES, FREE_SIGNUP_CREDITS } from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
@@ -47,7 +47,7 @@ const FAQS = [
   },
   {
     q: "How do credits work?",
-    a: `1 credit covers up to ${CREDIT_SECONDS / 60} minutes of source video. A submission is charged for its real length, not a flat rate per video, and unlocks as many AI-planned shorts as the footage supports.`,
+    a: "A submission uses credits in proportion to its real length, not a flat rate per video, and unlocks as many AI-planned shorts as the footage supports. For an uploaded video you see what it will use before you start, and every finished project shows what it used.",
   },
   {
     q: "Do unused plan credits roll over?",
@@ -55,7 +55,7 @@ const FAQS = [
   },
   {
     q: "Is there a free tier?",
-    a: "Yes — 1 free credit when you sign up, no card required.",
+    a: `Yes — ${FREE_SIGNUP_CREDITS} free credits when you sign up, no card required.`,
   },
   {
     q: "Can I cancel anytime?",
@@ -144,7 +144,7 @@ export default function LandingPage() {
                 Already have an account?
               </Link>
             </div>
-            <p className="text-xs text-[#B3ACA6] mt-4">1 free credit to start · no card required</p>
+            <p className="text-xs text-[#B3ACA6] mt-4">{FREE_SIGNUP_CREDITS} free credits to start · no card required</p>
           </div>
 
           {/* Abstract "one long video -> three vertical shorts" illustration — not a screenshot of
@@ -226,7 +226,7 @@ export default function LandingPage() {
               Pricing that scales with you
             </h2>
             <p className="text-sm text-[#7B7579]">
-              Prices in INR. A monthly allowance of source-video minutes, watermark-free — save ~30% billed yearly once you&apos;re signed
+              Prices in INR. A monthly allowance of credits, watermark-free — save ~30% billed yearly once you&apos;re signed
               in.
             </p>
           </div>
@@ -253,8 +253,8 @@ export default function LandingPage() {
                   </div>
                   <p className="text-[11px] text-[#7B7579] mb-3">or ₹{cfg.priceYearlyPerMonth.toLocaleString("en-IN")}/mo billed yearly</p>
                   <p className="text-sm font-semibold text-[#1d1b1e] mb-1">
-                    {formatMinutes(creditsToMinutes(cfg.monthlyCredits))}
-                    <span className="text-[#7B7579] font-normal text-xs"> of video / month</span>
+                    {cfg.monthlyCredits.toLocaleString("en-IN")}
+                    <span className="text-[#7B7579] font-normal text-xs"> credits / month</span>
                   </p>
                   <ul className="space-y-1.5 text-xs text-[#544244] mb-5 mt-4 text-left flex-1">
                     {TIER_FEATURES[tier].map((f) => (
@@ -301,7 +301,7 @@ export default function LandingPage() {
             <h2 className={`${playfair.className} text-2xl sm:text-3xl font-semibold text-[#1d1b1e] tracking-tight mb-3`}>
               Ship your next short today
             </h2>
-            <p className="text-sm text-[#7B7579] mb-7">1 free credit, no card required.</p>
+            <p className="text-sm text-[#7B7579] mb-7">{FREE_SIGNUP_CREDITS} free credits, no card required.</p>
             <Link
               href="/signup"
               className="inline-flex items-center gap-2 py-3 px-7 rounded-full bg-[#ed8395] text-white font-semibold text-sm shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 active:scale-[0.98]"

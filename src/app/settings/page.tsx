@@ -6,7 +6,7 @@ import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
 import { useRequireAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
-import { TIER_LABEL } from "@/lib/pricing";
+import { TIER_LABEL, formatCredits } from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
@@ -135,18 +135,18 @@ export default function SettingsPage() {
                 <li className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
                   <span>
-                    {billing.planCredits} credit{billing.planCredits === 1 ? "" : "s"} remaining this month
+                    {formatCredits(billing.planCredits)} credit{billing.planCredits === 1 ? "" : "s"} remaining this month
                     {billing.billingCycle === "yearly" ? " (billed yearly)" : ""}
                   </span>
                 </li>
               )}
               <li className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
-                <span>{billing.freeCredits} free credit{billing.freeCredits === 1 ? "" : "s"} remaining</span>
+                <span>{formatCredits(billing.freeCredits)} free credit{billing.freeCredits === 1 ? "" : "s"} remaining</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>
-                <span>{billing.paidCredits} paid credit{billing.paidCredits === 1 ? "" : "s"} remaining</span>
+                <span>{formatCredits(billing.paidCredits)} paid credit{billing.paidCredits === 1 ? "" : "s"} remaining</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-[14px] text-[#10B981]">check</span>

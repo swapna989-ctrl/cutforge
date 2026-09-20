@@ -22,6 +22,7 @@ import {
   HD_LONG_EDGE,
 } from "./ffmpeg.js";
 import { wantsHdWorkingCopy, linkedDownloadMaxHeight } from "./quality.js";
+import { creditsForSeconds } from "./credits.js";
 import { transcribeCaptions, transcribeSegments, type CaptionChunk } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
@@ -57,10 +58,6 @@ export function environmentReport(): string {
   ].join(" ");
 }
 
-// Mirrors CREDIT_SECONDS in src/lib/pricing.ts and charge_project_credits in
-// supabase/migrations/0009_duration_scaled_credits.sql: 1 credit covers up to this much video.
-const CREDIT_SECONDS = 10 * 60;
-
 function formatLength(seconds: number): string {
   const total = Math.round(seconds);
   const h = Math.floor(total / 3600);
@@ -93,11 +90,11 @@ async function checkLinkedVideo(job: ProjectRow, info: VideoInfo): Promise<void>
     throw new UserFacingError(`This video is ${formatLength(seconds)} long — Flovura can process videos up to 3 hours.`);
   }
 
-  const needed = Math.max(1, Math.ceil(seconds / CREDIT_SECONDS));
+  const needed = creditsForSeconds(seconds);
   const available = await getAvailableCredits(job.user_id);
   if (needed > available) {
     throw new UserFacingError(
-      `Not enough credits — this ${Math.ceil(seconds / 60)}-minute video needs ${needed} credit${needed === 1 ? "" : "s"}, only ${available} available. Head to Pricing to get more credits and continue.`
+      `Not enough credits — this ${Math.ceil(seconds / 60)}-minute video needs ${needed.toLocaleString("en-IN")} credits, only ${available.toLocaleString("en-IN")} available. Head to Pricing to get more credits and continue.`
     );
   }
 }

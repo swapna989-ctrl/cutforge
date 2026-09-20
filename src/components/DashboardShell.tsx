@@ -3,7 +3,7 @@
 import Link from "next/link";
 import NavDrawer, { BrandMark } from "@/components/NavDrawer";
 import { useBilling } from "@/lib/billing";
-import { TIER_LABEL } from "@/lib/pricing";
+import { TIER_LABEL, formatCredits } from "@/lib/pricing";
 
 /**
  * Visual redesign only — same real useAuth/useBilling/usePathname wiring as before, just
@@ -15,12 +15,12 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   // The total that can actually be spent: this month's plan credits first, then pack credits, then
   // free ones. Showing only the plan's share hid anything bought as a pack.
   const creditsLabel = billing.hasActivePlan
-    ? `${TIER_LABEL[billing.planTier]} · ${billing.availableCredits} left`
-    : `${billing.availableCredits} credits`;
+    ? `${TIER_LABEL[billing.planTier]} · ${formatCredits(billing.availableCredits)} left`
+    : `${formatCredits(billing.availableCredits)} credits`;
   const creditsBreakdown = [
-    billing.hasActivePlan ? `${billing.planCredits} from your plan this month` : null,
-    billing.paidCredits > 0 ? `${billing.paidCredits} from credit packs` : null,
-    billing.freeCredits > 0 ? `${billing.freeCredits} free` : null,
+    billing.hasActivePlan ? `${formatCredits(billing.planCredits)} from your plan this month` : null,
+    billing.paidCredits > 0 ? `${formatCredits(billing.paidCredits)} from credit packs` : null,
+    billing.freeCredits > 0 ? `${formatCredits(billing.freeCredits)} free` : null,
   ]
     .filter(Boolean)
     .join(" · ");

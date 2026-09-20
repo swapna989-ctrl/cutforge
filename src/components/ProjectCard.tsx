@@ -137,7 +137,12 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
         )}
 
         {isIngesting && <p className="text-[11px] text-[#B3ACA6] mt-2">Pick your options above and hit Generate clips</p>}
-        {isReady && <p className="text-[11px] text-[#B3ACA6] mt-2">Click to view and download clips</p>}
+        {isReady && (
+          <p className="text-[11px] text-[#B3ACA6] mt-2">
+            Click to view and download clips
+            {project.creditsCharged > 0 && <> · Used {project.creditsCharged.toLocaleString("en-IN")} credits</>}
+          </p>
+        )}
         {isFailed && project.errorMessage && <p className="text-[11px] text-[#EF4444] mt-2 line-clamp-2">{project.errorMessage}</p>}
       </div>
     </>

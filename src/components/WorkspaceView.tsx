@@ -21,7 +21,7 @@ import {
 } from "@/lib/projects";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
-import { creditsForDuration } from "@/lib/pricing";
+import { creditsForDuration, formatCredits } from "@/lib/pricing";
 import { readVideoDuration, uploadClipToR2, MAX_VIDEO_SECONDS } from "@/lib/upload";
 import { navigateToDownload } from "@/lib/download";
 
@@ -484,9 +484,9 @@ export default function WorkspaceView({ initialProject }: { initialProject?: Pro
     const watermarkFree = billing.isWatermarkFree;
     const label = watermarkFree
       ? billing.hasActivePlan && billing.planCredits >= creditsNeeded
-        ? `No watermark · ${billing.planCredits - creditsNeeded} credit${billing.planCredits - creditsNeeded === 1 ? "" : "s"} left this month`
-        : `No watermark · ${billing.paidCredits - creditsNeeded} paid credit${billing.paidCredits - creditsNeeded === 1 ? "" : "s"} left`
-      : `Includes Flovura watermark (${billing.freeCredits - creditsNeeded} free export${billing.freeCredits - creditsNeeded === 1 ? "" : "s"} left)`;
+        ? `No watermark · ${formatCredits(billing.planCredits - creditsNeeded)} credit${billing.planCredits - creditsNeeded === 1 ? "" : "s"} left this month`
+        : `No watermark · ${formatCredits(billing.paidCredits - creditsNeeded)} paid credit${billing.paidCredits - creditsNeeded === 1 ? "" : "s"} left`
+      : `Includes Flovura watermark (${formatCredits(billing.freeCredits - creditsNeeded)} free credit${billing.freeCredits - creditsNeeded === 1 ? "" : "s"} left)`;
 
     setDownloadState("preparing");
     (async () => {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { PipelineStatus } from "@/lib/pipeline";
 import { useBilling } from "@/lib/billing";
+import { formatCredits } from "@/lib/pricing";
 
 export type ExportSnapshot = { watermarkFree: boolean; label: string };
 
@@ -100,13 +101,13 @@ export default function ExportPanel({
             frozen.label
           ) : effectiveWatermarkFree ? (
             billing.hasActivePlan && billing.planCredits > 0 ? (
-              `No watermark · ${billing.planCredits} credit${billing.planCredits === 1 ? "" : "s"} left this month`
+              `No watermark · ${formatCredits(billing.planCredits)} credit${billing.planCredits === 1 ? "" : "s"} left this month`
             ) : (
-              `No watermark · ${billing.paidCredits} paid credit${billing.paidCredits === 1 ? "" : "s"} left`
+              `No watermark · ${formatCredits(billing.paidCredits)} paid credit${billing.paidCredits === 1 ? "" : "s"} left`
             )
           ) : (
             <>
-              Includes Flovura watermark ({billing.freeCredits} free export{billing.freeCredits === 1 ? "" : "s"} left) ·{" "}
+              Includes Flovura watermark ({formatCredits(billing.freeCredits)} free credit{billing.freeCredits === 1 ? "" : "s"} left) ·{" "}
               <Link href="/pricing" className="text-[#A8724A] hover:text-[#8F5D3A] underline underline-offset-2">
                 Remove it
               </Link>

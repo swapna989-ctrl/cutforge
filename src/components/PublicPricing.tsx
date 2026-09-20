@@ -9,9 +9,7 @@ import {
   TIER_LABEL,
   TIER_BLURB,
   TIER_FEATURES,
-  CREDIT_SECONDS,
-  creditsToMinutes,
-  formatMinutes,
+  FREE_SIGNUP_CREDITS,
   type BillingCycle,
 } from "@/lib/pricing";
 
@@ -33,7 +31,7 @@ export default function PublicPricing() {
       <div className="mb-10 text-center max-w-2xl mx-auto">
         <h1 className={`${playfair.className} text-3xl sm:text-4xl font-semibold text-[#1d1b1e] tracking-tight`}>Pricing</h1>
         <p className="text-sm text-[#7B7579] mt-3">
-          Prices in INR, inclusive of 18% GST. Every plan clips watermark-free, and every new account starts with 1 free credit — no card
+          Prices in INR, inclusive of 18% GST. Every plan clips watermark-free, and every new account starts with {FREE_SIGNUP_CREDITS} free credits — no card
           required.
         </p>
         <p className="text-xs text-[#B3ACA6] mt-2">Paid plans are launching soon.</p>
@@ -42,8 +40,8 @@ export default function PublicPricing() {
       <section>
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Subscriptions</h2>
         <p className="text-xs text-[#7B7579] mb-5 text-center max-w-md mx-auto">
-          A monthly allowance of source-video minutes to clip — submitting a video uses minutes in proportion to its real length and
-          unlocks as many AI-planned shorts as your footage supports.
+          A monthly allowance of credits to clip with — submitting a video uses credits in proportion to its real length and unlocks as
+          many AI-planned shorts as your footage supports.
         </p>
 
         <div className="flex justify-center mb-8">
@@ -97,12 +95,9 @@ export default function PublicPricing() {
                 <p className="text-[11px] text-[#7B7579] mb-3">
                   {cycle === "yearly" ? `₹${cfg.priceYearlyTotal.toLocaleString("en-IN")} billed yearly` : "billed monthly"}
                 </p>
-                <p className="text-sm font-semibold text-[#1d1b1e] mb-1">
-                  {formatMinutes(creditsToMinutes(cfg.monthlyCredits))}
-                  <span className="text-[#7B7579] font-normal text-xs"> of video / month</span>
-                </p>
-                <p className="text-[11px] text-[#7B7579] mb-4">
-                  {cfg.monthlyCredits} credits · 1 credit ≈ {CREDIT_SECONDS / 60} min
+                <p className="text-sm font-semibold text-[#1d1b1e] mb-4">
+                  {cfg.monthlyCredits.toLocaleString("en-IN")}
+                  <span className="text-[#7B7579] font-normal text-xs"> credits / month</span>
                 </p>
                 <ul className="space-y-1.5 text-xs text-[#544244] mb-5 text-left flex-1">
                   {TIER_FEATURES[tier].map((f) => (

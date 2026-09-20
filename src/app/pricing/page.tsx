@@ -4,13 +4,14 @@ import Image from "next/image";
 import { Playfair_Display } from "next/font/google";
 import PublicPricing from "@/components/PublicPricing";
 import PublicFooter from "@/components/PublicFooter";
+import { FREE_SIGNUP_CREDITS } from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
 export const metadata: Metadata = {
   title: "Pricing — Flovura",
   description:
-    "Flovura pricing: monthly plans from ₹499 for turning long videos into AI-planned shorts, watermark-free. Start with a free credit.",
+    `Flovura pricing: monthly plans from ₹499 for turning long videos into AI-planned shorts, watermark-free. Start with ${FREE_SIGNUP_CREDITS} free credits.`,
   alternates: { canonical: "/pricing" },
 };
 

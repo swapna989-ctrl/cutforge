@@ -6,7 +6,7 @@ import DashboardShell from "@/components/DashboardShell";
 import CropTool from "@/components/CropTool";
 import { useRequireAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
-import { getMoreCreditsHint } from "@/lib/pricing";
+import { getMoreCreditsHint, REGENERATE_CREDITS } from "@/lib/pricing";
 import { getShort, getProject, updateShort, type Short, type Project } from "@/lib/projects";
 import type { Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount } from "@/lib/pipeline";
 import { CAPTION_STYLE_OPTIONS, CAPTION_FONT_OPTIONS, CAPTION_POSITION_OPTIONS, CAPTION_LINE_COUNT_OPTIONS, CaptionPreview } from "@/lib/captionOptions";
@@ -217,7 +217,7 @@ function EditShortPageInner() {
   }
 
   const alreadyInFlight = short.status === "regenerating" || short.status === "processing";
-  const canAfford = billing.ready && billing.availableCredits >= 1;
+  const canAfford = billing.ready && billing.availableCredits >= REGENERATE_CREDITS;
 
   return (
     <DashboardShell>
@@ -436,7 +436,7 @@ function EditShortPageInner() {
                 className="w-full py-3.5 px-6 rounded-full bg-[#ed8395] text-white font-semibold text-sm shadow-[0_6px_18px_-3px_rgba(237,131,149,0.35)] hover:bg-[#9a4153] transition-all duration-150 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px]">autorenew</span>
-                {regenerating ? "Regenerating…" : "Regenerate Clip (Costs 1 Credit)"}
+                {regenerating ? "Regenerating…" : `Regenerate Clip (Costs ${REGENERATE_CREDITS} Credits)`}
               </button>
             </div>
           </>

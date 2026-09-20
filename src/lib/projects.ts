@@ -18,6 +18,8 @@ export type Project = {
   statusMessage: string | null;
   errorMessage: string | null;
   outputKey: string | null;
+  /** Credits this project used, once the worker has measured its length and charged for it; 0 before that. */
+  creditsCharged: number;
 };
 
 type ProjectRow = {
@@ -36,6 +38,7 @@ type ProjectRow = {
   status_message: string | null;
   error_message: string | null;
   output_key: string | null;
+  credits_charged: number | null;
 };
 
 function mapRow(row: ProjectRow): Project {
@@ -57,6 +60,7 @@ function mapRow(row: ProjectRow): Project {
     statusMessage: row.status_message,
     errorMessage: row.error_message,
     outputKey: row.output_key,
+    creditsCharged: row.credits_charged ?? 0,
   };
 }
 

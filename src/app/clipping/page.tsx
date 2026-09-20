@@ -8,7 +8,7 @@ import ProjectCard from "@/components/ProjectCard";
 import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
-import { creditsForDuration, getMoreCreditsHint } from "@/lib/pricing";
+import { creditsForDuration, getMoreCreditsHint, formatCredits, FREE_SIGNUP_CREDITS } from "@/lib/pricing";
 import { parseVideoUrl, shortLabel } from "@/lib/videoUrl";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, type Project } from "@/lib/projects";
@@ -20,11 +20,6 @@ import { CAPTION_FONT_OPTIONS, CAPTION_STYLE_OPTIONS, CAPTION_POSITION_OPTIONS, 
 const IN_PROGRESS_STATUSES = ["ingesting", "queued", "synthesizing"];
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
-
-// The real signup grant every new account gets (supabase/migrations/0002_billing.sql) — the
-// only fixed "total" that actually exists for credits. Paid packs (10/30/100) have no fixed
-// total to compare against, so "X of Y" only means something for the free-tier count.
-const FREE_CREDITS_GRANT = 1;
 
 export default function ClippingPage() {
   const { ready, user } = useRequireAuth();
@@ -173,7 +168,7 @@ export default function ClippingPage() {
       creditsNeeded = creditsForDuration(totalSeconds);
       if (creditsNeeded > billing.availableCredits) {
         setFileUploadError(
-          `This video needs ${creditsNeeded} credits (you have ${billing.availableCredits}) — ${getMoreCreditsHint(billing.planTier)}.`
+          `This video needs ${formatCredits(creditsNeeded)} credits (you have ${formatCredits(billing.availableCredits)}) — ${getMoreCreditsHint(billing.planTier)}.`
         );
         setUploadingFiles(false);
         return;
@@ -562,7 +557,7 @@ export default function ClippingPage() {
                 pending.creditsEstimate != null ? (
                   <p className="text-xs text-[#544244]">
                     <span className="font-semibold text-[#1d1b1e]">
-                      ≈ {pending.creditsEstimate} credit{pending.creditsEstimate === 1 ? "" : "s"}
+                      ≈ {formatCredits(pending.creditsEstimate)} credit{pending.creditsEstimate === 1 ? "" : "s"}
                     </span>{" "}
                     for this video{!pending.uploadDone && <span className="text-[#7B7579]"> · uploading…</span>}
                   </p>
@@ -651,7 +646,7 @@ export default function ClippingPage() {
             >
               <span className="material-symbols-outlined text-[18px]">content_cut</span>
               <span>
-                {billing.ready ? `Get Clips · ${billing.availableCredits} left` : "Get Clips"}
+                {billing.ready ? `Get Clips · ${formatCredits(billing.availableCredits)} left` : "Get Clips"}
               </span>
             </button>
           </form>
@@ -699,11 +694,11 @@ export default function ClippingPage() {
           <span className="text-sm text-[#7B7579]">
             {billing.hasActivePlan
               ? billing.availableCredits === billing.planCredits
-                ? `${billing.planCredits} credit${billing.planCredits === 1 ? "" : "s"} left this month`
-                : `${billing.availableCredits} credits left · ${billing.planCredits} from your plan this month`
+                ? `${formatCredits(billing.planCredits)} credit${billing.planCredits === 1 ? "" : "s"} left this month`
+                : `${formatCredits(billing.availableCredits)} credits left · ${formatCredits(billing.planCredits)} from your plan this month`
               : billing.paidCredits > 0
-                ? `${billing.freeCredits + billing.paidCredits} credits left`
-                : `${billing.freeCredits}/${FREE_CREDITS_GRANT} credits left`}
+                ? `${formatCredits(billing.freeCredits + billing.paidCredits)} credits left`
+                : `${formatCredits(billing.freeCredits)}/${formatCredits(FREE_SIGNUP_CREDITS)} credits left`}
           </span>
         )}
       </div>

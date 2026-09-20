@@ -14,10 +14,8 @@ import {
   TIER_BLURB,
   TIER_FEATURES,
   CREDIT_PACKS,
-  CREDIT_SECONDS,
   canBuyCreditPacks,
-  creditsToMinutes,
-  formatMinutes,
+  formatCredits,
   type BillingCycle,
   type PlanTier,
 } from "@/lib/pricing";
@@ -103,17 +101,17 @@ export default function PricingPage() {
 
       <div className="bg-white border border-[#ECE5E6] rounded-2xl px-6 py-4 mb-8 max-w-2xl mx-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)]">
         <span className="text-[#7B7579]">
-          Free credits: <span className="text-[#1d1b1e] font-semibold">{billing.freeCredits}</span>
+          Free credits: <span className="text-[#1d1b1e] font-semibold">{formatCredits(billing.freeCredits)}</span>
         </span>
         <span className="text-[#D8D0CE]">•</span>
         <span className="text-[#7B7579]">
-          Paid credits: <span className="text-[#1d1b1e] font-semibold">{billing.paidCredits}</span>
+          Paid credits: <span className="text-[#1d1b1e] font-semibold">{formatCredits(billing.paidCredits)}</span>
         </span>
         <span className="text-[#D8D0CE]">•</span>
         <span className="text-[#7B7579]">
           Plan:{" "}
           <span className="text-[#9a4153] font-semibold">
-            {billing.hasActivePlan ? `${TIER_LABEL[billing.planTier]} · ${billing.planCredits} credits left this month` : "None"}
+            {billing.hasActivePlan ? `${TIER_LABEL[billing.planTier]} · ${formatCredits(billing.planCredits)} credits left this month` : "None"}
           </span>
           {planEndsAt && <span className="text-[#7B7579]"> · active until {formatDate(planEndsAt)}</span>}
         </span>
@@ -129,8 +127,8 @@ export default function PricingPage() {
       <section className="mb-16">
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Subscriptions</h2>
         <p className="text-xs text-[#7B7579] mb-5 text-center max-w-md mx-auto">
-          A monthly allowance of source-video minutes to clip, watermark-free — submitting a video uses minutes in proportion to its
-          real length and unlocks as many AI-planned shorts as your footage supports.
+          A monthly allowance of credits to clip with, watermark-free — submitting a video uses credits in proportion to its real
+          length and unlocks as many AI-planned shorts as your footage supports.
         </p>
 
         <div className="flex justify-center mb-8">
@@ -189,12 +187,9 @@ export default function PricingPage() {
                   <p className="text-[11px] text-[#7B7579] mb-3">₹{cfg.priceYearlyTotal.toLocaleString("en-IN")} billed yearly</p>
                 )}
                 {cycle === "monthly" && <p className="text-[11px] text-[#7B7579] mb-3">billed monthly</p>}
-                <p className="text-sm font-semibold text-[#1d1b1e] mb-1">
-                  {formatMinutes(creditsToMinutes(cfg.monthlyCredits))}
-                  <span className="text-[#7B7579] font-normal text-xs"> of video / month</span>
-                </p>
-                <p className="text-[11px] text-[#7B7579] mb-4">
-                  {cfg.monthlyCredits} credits · 1 credit ≈ {CREDIT_SECONDS / 60} min
+                <p className="text-sm font-semibold text-[#1d1b1e] mb-4">
+                  {cfg.monthlyCredits.toLocaleString("en-IN")}
+                  <span className="text-[#7B7579] font-normal text-xs"> credits / month</span>
                 </p>
                 <ul className="space-y-1.5 text-xs text-[#544244] mb-5 text-left flex-1">
                   {TIER_FEATURES[tier].map((f) => (
@@ -237,8 +232,7 @@ export default function PricingPage() {
         <h2 className={`${playfair.className} text-xl font-semibold text-[#1d1b1e] mb-1 text-center`}>Credit packs</h2>
         <p className="text-xs text-[#7B7579] mb-6 text-center max-w-md mx-auto">
           One-time purchase, no auto-renewal — a top-up for when you run past your plan&apos;s monthly allowance. Submitting a video uses
-          credits in proportion to its real length (1 credit ≈ {CREDIT_SECONDS / 60} min) and unlocks as many AI-planned shorts as your
-          footage supports, watermark-free.
+          credits in proportion to its real length and unlocks as many AI-planned shorts as your footage supports, watermark-free.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-4xl mx-auto">
           {CREDIT_PACKS.map((pack) => {
@@ -253,9 +247,8 @@ export default function PricingPage() {
                     {pack.badge}
                   </span>
                 )}
-                <span className={`${playfair.className} text-3xl font-semibold text-[#1d1b1e] mt-2`}>{pack.credits}</span>
-                <span className="text-xs text-[#7B7579] uppercase tracking-wide">credits</span>
-                <span className="text-[11px] text-[#B3ACA6] mb-4">≈ {formatMinutes(creditsToMinutes(pack.credits))} of video</span>
+                <span className={`${playfair.className} text-3xl font-semibold text-[#1d1b1e] mt-2`}>{pack.credits.toLocaleString("en-IN")}</span>
+                <span className="text-xs text-[#7B7579] uppercase tracking-wide mb-4">credits</span>
                 <span className="text-2xl font-semibold text-[#9a4153] mb-5">₹{pack.price.toLocaleString("en-IN")}</span>
                 <button
                   disabled={busy !== null}
