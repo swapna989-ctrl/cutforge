@@ -20,8 +20,12 @@ export async function POST(request: Request) {
   const keyId = env("RAZORPAY_KEY_ID");
   const keySecret = env("RAZORPAY_KEY_SECRET");
   const publicKeyId = env("NEXT_PUBLIC_RAZORPAY_KEY_ID");
-  if (!keyId || !keySecret || !publicKeyId) {
-    console.error("[razorpay] RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET / NEXT_PUBLIC_RAZORPAY_KEY_ID are not all set");
+  // The service-role key is checked here too, before an order exists: recording the payment needs it,
+  // and finding it missing afterwards would leave an order at Razorpay that nothing records.
+  if (!keyId || !keySecret || !publicKeyId || !env("SUPABASE_SERVICE_ROLE_KEY")) {
+    console.error(
+      "[razorpay] RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET / NEXT_PUBLIC_RAZORPAY_KEY_ID / SUPABASE_SERVICE_ROLE_KEY are not all set"
+    );
     return NextResponse.json({ error: "Payments aren't available right now — please try again later." }, { status: 503 });
   }
 
