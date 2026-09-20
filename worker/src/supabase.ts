@@ -39,16 +39,14 @@ export type ProjectRow = {
   trimmed_key: string | null;
 };
 
-export async function claimNextJob(): Promise<ProjectRow | null> {
+export async function claimNextJob(skipIds: string[] = []): Promise<ProjectRow | null> {
   // Not a true atomic claim (fine for a single-worker v1 — revisit with a proper
   // SELECT ... FOR UPDATE SKIP LOCKED RPC before running more than one worker at once).
-  const { data, error } = await supabase
-    .from("projects")
-    .select("*")
-    .eq("pipeline_status", "queued")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  // `skipIds` are jobs waiting out a retry delay (see blockedRetry.ts): still "queued" in the
+  // database, but not to be picked up until their time comes.
+  let query = supabase.from("projects").select("*").eq("pipeline_status", "queued");
+  if (skipIds.length > 0) query = query.not("id", "in", `(${skipIds.join(",")})`);
+  const { data, error } = await query.order("created_at", { ascending: true }).limit(1).maybeSingle();
   if (error) throw error;
   if (!data) return null;
 

@@ -23,10 +23,11 @@ import { transcribeCaptions, transcribeSegments, type CaptionChunk } from "./tra
 import { planClips } from "./clipPlanner.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
 import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, getAvailableCredits, type ProjectRow } from "./supabase.js";
-import { toUserMessage, UserFacingError } from "./errors.js";
+import { toUserMessage, UserFacingError, DownloadBlockedError } from "./errors.js";
+import { scheduleBlockedRetry, clearBlockedRetry } from "./blockedRetry.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
-export const WORKER_BUILD = "2026-09-19-link-ingestion";
+export const WORKER_BUILD = "2026-09-20-blocked-retry";
 
 const MB = 1024 * 1024;
 
@@ -322,7 +323,29 @@ export async function processJob(job: ProjectRow): Promise<void> {
       progress: 100,
       status_message: `${readyCount} of ${shorts.length} shorts ready.`,
     });
+    clearBlockedRetry(job.id);
   } catch (err) {
+    // The video site refused our servers (YouTube's bot check, a rate limit). That often passes by
+    // itself, so instead of failing the job it goes back in the queue and is tried again after a
+    // wait (see blockedRetry.ts); only once the retries are used up does the user see the failure.
+    if (err instanceof DownloadBlockedError) {
+      const retry = scheduleBlockedRetry(job.id);
+      if (retry) {
+        const minutes = Math.round(retry.delayMs / 60_000);
+        const link = job.source_url ? parseVideoUrl(job.source_url) : null;
+        const site = link?.ok ? PLATFORM_LABEL[link.platform] : "The video site";
+        console.error(`Job ${job.id} was blocked by the video site; retry ${retry.attempt} of ${retry.of} in ${minutes} min:`, err.message);
+        await updateJob(job.id, {
+          pipeline_status: "queued",
+          progress: 3,
+          status_message: `${site} is limiting downloads right now — trying again in about ${minutes} minutes (retry ${retry.attempt} of ${retry.of})…`,
+          error_message: null,
+        }).catch((updateErr) => console.error("Also failed to record the retry:", updateErr));
+        return;
+      }
+    }
+    clearBlockedRetry(job.id);
+
     // The env report (thread/memory diagnostics) goes to Railway's own logs, same as every other
     // failure detail here — never into error_message, which a real user reads directly off their
     // project card. It used to be appended there raw; a real user seeing

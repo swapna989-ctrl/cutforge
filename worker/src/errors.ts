@@ -8,6 +8,17 @@ export class UserFacingError extends Error {
   }
 }
 
+/** The video site is refusing our servers right now (YouTube's "confirm you're not a bot" check, a rate
+ *  limit). Unlike a private or removed video, that often clears by itself, so the pipeline puts the
+ *  job back in the queue to retry later (see blockedRetry.ts) before giving up. It is still a
+ *  UserFacingError: if the retries run out, this message is what the user sees. */
+export class DownloadBlockedError extends UserFacingError {
+  constructor(message: string) {
+    super(message);
+    this.name = "DownloadBlockedError";
+  }
+}
+
 /**
  * Turns a caught error into what actually reaches projects.error_message / shorts.error_message
  * — the one thing a real user sees when a render fails. ffmpeg/yt-dlp/Whisper failures carry raw

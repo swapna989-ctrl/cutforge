@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "./env.js";
-import { UserFacingError } from "./errors.js";
+import { DownloadBlockedError, UserFacingError } from "./errors.js";
 
 const ASSET_BY_PLATFORM: Record<string, string> = {
   win32: "yt-dlp.exe",
@@ -133,9 +133,17 @@ function runCapture(args: string[], timeoutMs: number): Promise<Captured> {
   });
 }
 
-type Failure = { message: string; permanent: boolean };
+/** `blocked` is a permanent failure *for this attempt* that is likely to pass on its own later (the
+ *  site refusing our servers), so the pipeline retries the whole job after a wait instead of
+ *  failing it. */
+type Failure = { message: string; permanent: boolean; blocked?: boolean };
 
 const permanent = (message: string): Failure => ({ message, permanent: true });
+const blocked = (message: string): Failure => ({ message, permanent: true, blocked: true });
+
+function failureToError(failure: Failure): UserFacingError {
+  return failure.blocked ? new DownloadBlockedError(failure.message) : new UserFacingError(failure.message);
+}
 
 /**
  * Turns yt-dlp's raw stderr into something a user can act on, and says whether retrying could
@@ -174,10 +182,15 @@ export function explainYtDlpFailure(stderr: string): Failure | null {
     return permanent("That video is unavailable — it may have been removed or made private. Check the link, or upload the file.");
   }
   if (s.includes("not a bot") || s.includes("sign in to confirm")) {
-    // Not the user's problem and not fixable by retrying right now: the cookies expired or this
-    // server's IP got flagged. Say so loudly in the logs where someone can act on it.
-    console.error("[ytdlp] YouTube bot check hit — the YOUTUBE_COOKIES are probably expired or this IP is flagged. Refresh the cookies.");
-    return permanent("YouTube is blocking automatic downloads from our servers for this video right now. Try again later, or download it yourself and upload the file.");
+    // Not the user's problem. Sometimes it passes on its own (the job is retried later), sometimes
+    // the cookies expired or this server's IP got flagged for a while. Say so in the logs where
+    // someone can act on it.
+    console.error("[ytdlp] YouTube bot check hit — the YOUTUBE_COOKIES may be expired or this IP is flagged. Refresh the cookies if it keeps happening.");
+    return blocked("YouTube is blocking automatic downloads from our servers for this video right now. Try again later, or download it yourself and upload the file.");
+  }
+  if (s.includes("http error 429") || s.includes("too many requests")) {
+    console.error("[ytdlp] the site is rate-limiting this server (HTTP 429).");
+    return blocked("The video site is limiting automatic downloads from our servers right now. Try again in a few minutes, or download it yourself and upload the file.");
   }
   return null;
 }
@@ -214,7 +227,7 @@ export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
   if (result.code !== 0) {
     console.error(`[ytdlp] info lookup failed (code ${result.code}${result.timedOut ? ", timed out" : ""}):`, result.stderr.trim().split("\n").slice(-6).join(" | "));
     const known = explainYtDlpFailure(result.stderr);
-    if (known) throw new UserFacingError(known.message);
+    if (known) throw failureToError(known);
     throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
   }
 
@@ -354,7 +367,7 @@ export async function downloadFromUrl(url: string, outputPath: string, onProgres
       console.error(`yt-dlp download attempt ${attempt}/${MAX_ATTEMPTS} failed:`, detail);
 
       const known = explainYtDlpFailure(detail);
-      if (known?.permanent) throw new UserFacingError(known.message);
+      if (known?.permanent) throw failureToError(known);
 
       // A player change on YouTube's side breaks old yt-dlp builds; one update-and-retry is cheap
       // and is what actually fixes that class of failure.

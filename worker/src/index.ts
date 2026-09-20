@@ -11,6 +11,7 @@ setDefaultResultOrder("ipv4first");
 import { env } from "./env.js";
 import { claimNextJob, claimNextShortRegenerate, claimNextPreviewFrame } from "./supabase.js";
 import { processJob, environmentReport } from "./pipeline.js";
+import { jobsStillWaiting } from "./blockedRetry.js";
 import { regenerateShort, extractPreviewFrame } from "./regenerate.js";
 import { logYtDlpVersion, updateYtDlp } from "./ytdlp.js";
 
@@ -27,7 +28,7 @@ process.on("SIGTERM", () => {
 // accepted limitation as everything else in this single-worker design.
 async function tick(): Promise<void> {
   try {
-    const job = await claimNextJob();
+    const job = await claimNextJob(jobsStillWaiting());
     if (job) {
       console.log(`Processing job ${job.id} (${job.name})`);
       await processJob(job);
