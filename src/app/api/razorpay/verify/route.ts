@@ -17,6 +17,11 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Please sign in to continue." }, { status: 401 });
 
+  if (!env("RAZORPAY_KEY_SECRET")) {
+    console.error("[razorpay] RAZORPAY_KEY_SECRET is not set; cannot verify payments");
+    return NextResponse.json({ error: "Payments aren't available right now — please try again later." }, { status: 503 });
+  }
+
   const body = (await request.json().catch(() => null)) as Partial<VerifyBody> | null;
   if (!body?.razorpay_order_id || !body?.razorpay_payment_id || !body?.razorpay_signature) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });

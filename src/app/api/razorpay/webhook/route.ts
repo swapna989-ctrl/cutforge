@@ -14,6 +14,11 @@ type RazorpayWebhookPayload = {
 // the raw body must be read before any JSON parsing (parsing first would let whitespace
 // differences silently break the signature check).
 export async function POST(request: Request) {
+  if (!env("RAZORPAY_WEBHOOK_SECRET")) {
+    console.error("[razorpay webhook] RAZORPAY_WEBHOOK_SECRET is not set; refusing every delivery");
+    return NextResponse.json({ error: "Webhook is not configured" }, { status: 503 });
+  }
+
   const rawBody = await request.text();
   const signature = request.headers.get("x-razorpay-signature");
   if (!signature || !verifyHmacSignature(rawBody, env("RAZORPAY_WEBHOOK_SECRET"), signature)) {

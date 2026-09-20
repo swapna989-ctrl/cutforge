@@ -10,6 +10,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * rather than returning false.
  */
 export function verifyHmacSignature(payload: string, secret: string, signatureHex: string): boolean {
+  // An unset variable reads as "", and HMAC with an empty key still produces a signature, one anyone
+  // can compute. A missing secret must mean "reject everything", never "accept a signature made
+  // with no secret".
+  if (!secret) return false;
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
   const expectedBuf = Buffer.from(expected, "utf-8");
   const actualBuf = Buffer.from(signatureHex, "utf-8");
