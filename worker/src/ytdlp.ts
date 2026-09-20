@@ -41,15 +41,18 @@ function resolveCookiesFilePath(): Promise<string | null> {
   return cookiesFilePathPromise;
 }
 
-// Everything downstream re-encodes to a 1280-long-edge, 30fps file (see ffmpeg.ts's SCALE_FILTER and
-// MEMORY_SAFE_X264), so anything above 720p is pure waste -- measured on a real 10-minute video:
-// normalizing the 1080p60 AV1 download YouTube's default pick gave took 723s, and Twitch's default
-// "Source" stream is 3x the bytes of its 720p one. Sort keys are priority order: resolution first
-// (closest to 720 without going over), then frame rate (30 if there's a choice, but never trading
-// resolution away for it), then H.264 (cheapest to decode) and AAC audio. `bv+ba` is separate
-// video+audio streams (YouTube); `b` is a single combined stream (Twitch, which has no video-only
-// formats, falls through to it).
-const FORMAT_ARGS = ["-f", "bv+ba/b", "-S", "res:720,fps:30,vcodec:h264,acodec:aac"];
+// Everything downstream re-encodes to a 30fps file at a capped size (see ffmpeg.ts's scaleFilter and
+// MEMORY_SAFE_X264), so a picture bigger than that cap is pure waste -- measured on a real 10-minute
+// video: normalizing the 1080p60 AV1 download YouTube's default pick gave took 723s, and Twitch's default
+// "Source" stream is 3x the bytes of its 720p one. Most videos are capped at 720p; a wide video that
+// becomes a vertical short is capped at 1080p instead (see quality.ts), which is passed in as
+// `maxHeight`. Sort keys are priority order: resolution first (closest to the cap without going over),
+// then frame rate (30 if there's a choice, but never trading resolution away for it), then H.264
+// (cheapest to decode) and AAC audio. `bv+ba` is separate video+audio streams (YouTube); `b` is a
+// single combined stream (Twitch, which has no video-only formats, falls through to it).
+function formatArgs(maxHeight: number): string[] {
+  return ["-f", "bv+ba/b", "-S", `res:${maxHeight},fps:30,vcodec:h264,acodec:aac`];
+}
 
 // Generous enough for a real slow-but-working download (the first request for a given video can
 // take several minutes — YouTube's own extraction/anti-bot overhead, confirmed against a real
@@ -269,10 +272,10 @@ export async function logYtDlpVersion(): Promise<void> {
   }
 }
 
-async function runYtDlp(url: string, outputPath: string, onProgress?: (percent: number) => void): Promise<void> {
+async function runYtDlp(url: string, outputPath: string, maxHeight: number, onProgress?: (percent: number) => void): Promise<void> {
   const args = [
     url,
-    ...FORMAT_ARGS,
+    ...formatArgs(maxHeight),
     "--merge-output-format",
     "mp4",
     "--ffmpeg-location",
@@ -344,14 +347,20 @@ async function runYtDlp(url: string, outputPath: string, onProgress?: (percent: 
  * Throws UserFacingError for anything a user can act on (private/removed/blocked); a failure it
  * can't explain becomes the generic download message, with the real detail in the logs.
  */
-export async function downloadFromUrl(url: string, outputPath: string, onProgress?: (percent: number) => void): Promise<void> {
+export async function downloadFromUrl(
+  url: string,
+  outputPath: string,
+  onProgress?: (percent: number) => void,
+  /** The tallest picture to fetch; 720 unless the caller says the job will use a bigger one. */
+  maxHeight: number = 720
+): Promise<void> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
   let updatedYtDlp = false;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await runYtDlp(url, outputPath, onProgress);
+      await runYtDlp(url, outputPath, maxHeight, onProgress);
 
       // yt-dlp exiting 0 doesn't guarantee a real, complete file landed (seen with geo-restricted
       // or partially-available sources) — check for real bytes rather than trusting exit code alone.

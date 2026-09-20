@@ -9,6 +9,14 @@ function required(name: string): string {
   return value;
 }
 
+// How many threads each ffmpeg encode/decode may use. 2 is what a 1 GB / 2 vCPU container needed (see
+// THREAD_LIMIT in ffmpeg.ts); on a larger plan it can be raised in Railway without a code change.
+// Anything that isn't a whole number from 1 to 8 falls back to 2 rather than being trusted.
+function ffmpegThreads(raw: string | undefined): number {
+  const n = Number(raw?.trim());
+  return Number.isInteger(n) && n >= 1 && n <= 8 ? n : 2;
+}
+
 export const env = {
   SUPABASE_URL: required("SUPABASE_URL"),
   SUPABASE_SERVICE_ROLE_KEY: required("SUPABASE_SERVICE_ROLE_KEY"),
@@ -18,6 +26,7 @@ export const env = {
   R2_BUCKET_NAME: required("R2_BUCKET_NAME"),
   OPENAI_API_KEY: required("OPENAI_API_KEY"),
   POLL_INTERVAL_MS: Number(process.env.POLL_INTERVAL_MS ?? 4000),
+  FFMPEG_THREADS: ffmpegThreads(process.env.FFMPEG_THREADS),
   // Optional — the Netscape-format cookies.txt contents for a dedicated (throwaway, not a real
   // user's) YouTube account, used so yt-dlp looks like a logged-in browser instead of an
   // anonymous request from a datacenter IP. YouTube blocks the latter outright ("Sign in to

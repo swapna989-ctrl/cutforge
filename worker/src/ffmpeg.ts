@@ -6,24 +6,32 @@ import { copyFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CaptionChunk } from "./transcribe.js";
+import { env } from "./env.js";
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 if (ffprobePath?.path) ffmpeg.setFfprobePath(ffprobePath.path);
 
 export type SilenceInterval = { start: number; end: number };
 
-// Caps the long edge at 720p-equivalent before any re-encode. Measured against a real 13s
-// iPhone clip (1080x1920 h264 @ 60fps, 36MB, ~23Mbps): a 1920 cap left it untouched and still
-// peaked at ~683MB RSS for one encode, which exceeds Railway's 1GB *total container* budget
-// once Node's own footprint is added. This combination measured ~235MB peak for that file.
+// Caps the long edge before any re-encode. The standard cap is 720p-equivalent. Measured against a
+// real 13s iPhone clip (1080x1920 h264 @ 60fps, 36MB, ~23Mbps): a 1920 cap with unbounded threads
+// left it untouched and peaked at ~683MB RSS for one encode, which exceeds a 1GB *total container*
+// budget once Node's own footprint is added; the 1280 cap with the thread limit below measured
+// ~235MB peak for that file. The HD cap (1920) is only used for wide video that becomes a vertical
+// short (see quality.ts): with the thread limit in place a 1080p30 encode measured ~250MB peak.
 // `-2` keeps the other edge's aspect ratio while forcing it even, which libx264 requires.
-const SCALE_FILTER = "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))'";
+export const STANDARD_LONG_EDGE = 1280;
+export const HD_LONG_EDGE = 1920;
+
+function scaleFilter(maxLongEdge: number): string {
+  return `scale='if(gt(iw,ih),min(${maxLongEdge},iw),-2)':'if(gt(iw,ih),-2,min(${maxLongEdge},ih))'`;
+}
 
 // A container commonly reports the *host's* CPU count rather than its own quota, and both the
 // h264 decoder and x264 auto-size their thread pools (and per-thread frame buffers) from that.
 // On a 2-vCPU/1GB Railway instance sitting on a many-core host, that alone can allocate far
 // past the memory limit before any real work happens, so pin it explicitly at both ends.
-const THREAD_LIMIT = "2";
+const THREAD_LIMIT = String(env.FFMPEG_THREADS);
 
 // Applies to the *decoder*. ffmpeg only honours -threads for decoding when it appears before
 // -i; the same flag in output position configures the encoder instead, which is why setting it
@@ -133,11 +141,11 @@ export function getVideoDimensions(inputPath: string): Promise<{ width: number; 
  * original source once per kept segment — each decode pays the full native-resolution memory
  * cost regardless of output scale, since scaling happens after decode in the filter graph.
  */
-export function normalizeResolution(inputPath: string, outputPath: string): Promise<void> {
+export function normalizeResolution(inputPath: string, outputPath: string, maxLongEdge: number = STANDARD_LONG_EDGE): Promise<void> {
   return runFfmpeg(
     ffmpeg(inputPath)
       .inputOptions(DECODE_OPTS)
-      .outputOptions(["-vf", SCALE_FILTER, "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"]),
+      .outputOptions(["-vf", scaleFilter(maxLongEdge), "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"]),
     outputPath
   );
 }
@@ -154,9 +162,13 @@ export async function cutSilences(
   silences: SilenceInterval[],
   duration: number,
   outputPath: string,
-  tmpDir: string
+  tmpDir: string,
+  // Must match the cap normalizeResolution used, or this step would quietly shrink an HD working
+  // copy back down to the standard size.
+  maxLongEdge: number = STANDARD_LONG_EDGE
 ): Promise<void> {
   const PAD = 0.15;
+  const SCALE_FILTER = scaleFilter(maxLongEdge);
   const keep: { start: number; end: number }[] = [];
   let cursor = 0;
   for (const s of silences) {

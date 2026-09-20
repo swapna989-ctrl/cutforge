@@ -18,7 +18,10 @@ import {
   normalizeToTargetResolution,
   multiClipTargetDimensions,
   concatClips,
+  STANDARD_LONG_EDGE,
+  HD_LONG_EDGE,
 } from "./ffmpeg.js";
+import { wantsHdWorkingCopy, linkedDownloadMaxHeight } from "./quality.js";
 import { transcribeCaptions, transcribeSegments, type CaptionChunk } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
 import { detectFaceCenterFraction } from "./faceCrop.js";
@@ -27,7 +30,7 @@ import { toUserMessage, UserFacingError, DownloadBlockedError } from "./errors.j
 import { scheduleBlockedRetry, clearBlockedRetry } from "./blockedRetry.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
-export const WORKER_BUILD = "2026-09-20-blocked-retry";
+export const WORKER_BUILD = "2026-09-20-hd-working-copy";
 
 const MB = 1024 * 1024;
 
@@ -106,6 +109,9 @@ export async function processJob(job: ProjectRow): Promise<void> {
 
   try {
     const clips = await getProjectClips(job.id);
+    // How large the working copy is kept while it is trimmed and cut into shorts; decided once the
+    // source is on disk (see quality.ts) and reused by the silence cut below so it can't undo it.
+    let workingLongEdge = STANDARD_LONG_EDGE;
 
     if (clips.length > 0) {
       // Multi-clip path: download and normalize each source clip individually (same
@@ -160,6 +166,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
         await updateJob(job.id, { status_message: `Downloading from ${platform}…`, progress: 5 });
         let lastReportedPercent = 0;
         let lastReportedAt = 0;
+        const maxHeight = linkedDownloadMaxHeight(job.ratio, info.durationSeconds);
         await downloadFromUrl(link.url, sourcePath, (percent) => {
           const now = Date.now();
           // Progress arrives many times a second; the database only needs a heartbeat.
@@ -167,7 +174,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
           lastReportedPercent = percent;
           lastReportedAt = now;
           updateJob(job.id, { status_message: `Downloading from ${platform}… ${percent}%`, progress: 5 + Math.floor(percent * 0.03) }).catch(() => {});
-        });
+        }, maxHeight);
 
         await updateJob(job.id, { status_message: "Saving source…", progress: 8 });
         const sourceKey = `${job.user_id}/source/${randomUUID()}.mp4`;
@@ -183,7 +190,12 @@ export async function processJob(job: ProjectRow): Promise<void> {
       // resolution — every step after this works off the much cheaper result, which is what
       // actually keeps memory under Railway's 1GB container limit for real phone footage.
       await updateJob(job.id, { status_message: "Preparing footage…", progress: 15 });
-      await normalizeResolution(sourcePath, normalizedPath);
+      const [sourceSeconds, sourceDimensions] = await Promise.all([getDuration(sourcePath), getVideoDimensions(sourcePath)]);
+      workingLongEdge = wantsHdWorkingCopy(job.ratio, sourceSeconds, sourceDimensions) ? HD_LONG_EDGE : STANDARD_LONG_EDGE;
+      console.log(
+        `[quality] job ${job.id}: ${sourceDimensions.width}x${sourceDimensions.height}, ${Math.round(sourceSeconds)}s, ratio ${job.ratio} -> working copy capped at ${workingLongEdge}px`
+      );
+      await normalizeResolution(sourcePath, normalizedPath, workingLongEdge);
     }
 
     await updateJob(job.id, { status_message: "Detecting scene boundaries…", progress: 20 });
@@ -207,7 +219,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
     const silences = await detectSilences(normalizedPath);
 
     await updateJob(job.id, { status_message: "Removing dead air & filler pauses…", progress: 40 });
-    await cutSilences(normalizedPath, silences, duration, trimmedPath, tmpDir);
+    await cutSilences(normalizedPath, silences, duration, trimmedPath, tmpDir, workingLongEdge);
 
     // Persisted permanently (unlike every other file in tmpDir) so a short can be re-edited later
     // — short.source_start_seconds/end_seconds are positions in THIS trimmed timeline, not the
