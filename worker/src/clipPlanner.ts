@@ -35,6 +35,10 @@ const CLIP_LENGTH_BOUNDS: Record<ClipLength, { min: number; max: number }> = {
   long: { min: 30, max: 60 },
 };
 
+// Dead air is cut out of a clip after the moment is chosen, so a clip is planned this much longer than
+// the length the user asked for (see planClips).
+const DEAD_AIR_ALLOWANCE = 1.1;
+
 // Roughly how much video one clip should be drawn from. A 15-minute video asks for 6, a 2-hour
 // stream asks for the ceiling. Measured against the competitor a user compared us with: a
 // 128-minute video there produced 50 clips, about one per 2.5 minutes.
@@ -285,7 +289,10 @@ export async function planClips(
   clipLength: ClipLength
 ): Promise<ClipCandidate[]> {
   if (segments.length === 0) throw new Error("Cannot plan clips from an empty transcript");
-  const bounds = CLIP_LENGTH_BOUNDS[clipLength];
+  // Dead air is taken out of each clip after it is cut (see render.ts), which shortens it by a few
+  // percent. Aiming a little longer keeps the finished short inside the length the user chose.
+  const chosen = CLIP_LENGTH_BOUNDS[clipLength];
+  const bounds = { min: Math.ceil(chosen.min * DEAD_AIR_ALLOWANCE), max: chosen.max };
   const target = targetClipCount(videoDurationSeconds);
   const windows = planWindows(videoDurationSeconds);
 

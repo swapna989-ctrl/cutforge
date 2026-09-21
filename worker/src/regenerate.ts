@@ -3,19 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
-import {
-  extractClipRange,
-  extractAudio,
-  extractFrame,
-  finalizeVideo,
-  normalizeToTargetResolution,
-  multiClipTargetDimensions,
-  getVideoDimensions,
-} from "./ffmpeg.js";
-import { transcribeCaptions, type CaptionChunk } from "./transcribe.js";
-import { detectFaceCenterFraction } from "./faceCrop.js";
-import { getProject, updateShort, chargeShortRegenerateCredit, type ShortRow } from "./supabase.js";
-import { toUserMessage } from "./errors.js";
+import { extractClipRange, extractFrame, getDuration, getVideoDimensions, STANDARD_LONG_EDGE, HD_LONG_EDGE } from "./ffmpeg.js";
+import { renderShort, clipSourceKey } from "./render.js";
+import { getProject, updateShort, chargeShortRegenerateCredit, type ProjectRow, type ShortRow } from "./supabase.js";
+import { toUserMessage, UserFacingError } from "./errors.js";
 
 /** null on the short means "inherit the parent project's current default" — same nullable-override
  *  pattern as CaptionPresetSpec's fontOverride in ffmpeg.ts. */
@@ -24,12 +15,30 @@ function resolve<T>(shortValue: T | null, projectValue: T): T {
 }
 
 /**
+ * A project made before shorts were cut one moment at a time has ONE saved file: the whole video with
+ * its dead air already removed (`trimmed_key`), and each short's start/end are positions in that file.
+ * Every newer project has none, and instead each short has its own small saved footage (see
+ * render.ts's clipSourceKey).
+ */
+function usesWholeTrimmedFile(project: ProjectRow): boolean {
+  return Boolean(project.trimmed_key);
+}
+
+/** Fetches this short's own saved footage, or explains that it isn't there. */
+async function downloadClipSource(project: ProjectRow, short: ShortRow, localPath: string): Promise<void> {
+  try {
+    await downloadToFile(clipSourceKey(project.user_id, short.id), localPath);
+  } catch (err) {
+    console.error(`No saved footage for short ${short.id}:`, err);
+    throw new UserFacingError("This clip's saved footage couldn't be found, so it can't be re-edited. Generate it again from the original video.");
+  }
+}
+
+/**
  * Re-renders one already-generated short with its own overridden settings (caption
  * style/font/position/language/line-count/ratio, or a manual crop center) layered on top of its
- * parent project's current defaults — mirrors worker/src/pipeline.ts's per-short render block
- * almost exactly, the two differences being: this downloads the project's persisted trimmed_key
- * instead of already having the trimmed file in hand from the same job, and it charges 1 flat
- * credit (see chargeShortRegenerateCredit) instead of the project-level duration-scaled charge.
+ * parent project's current defaults — the same render as the first time (see render.ts), starting
+ * from the short's saved footage instead of from the original video.
  *
  * On failure, the short reverts to status 'ready' (never 'failed') with its output_key
  * untouched — output_key is only ever written on a successful new render, so a failed edit
@@ -40,82 +49,51 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
   try {
     const project = await getProject(short.project_id);
     if (!project) throw new Error(`No project ${short.project_id} for short ${short.id}`);
-    if (!project.trimmed_key) {
-      throw new Error("This project was generated before editing was supported, so there's no saved source to re-cut this clip from.");
-    }
 
-    // Charged before any of the metered Whisper/render calls below run — same "charge before the
-    // expensive work starts" ordering as the project-level charge_project_credits.
-    await chargeShortRegenerateCredit(short.id);
-
-    const trimmedPath = join(tmpDir, "trimmed.mp4");
-    await downloadToFile(project.trimmed_key, trimmedPath);
-
-    const ratio = resolve(short.ratio, project.ratio);
-    const captionStyle = resolve(short.caption_style, project.caption_style);
-    const captionFont = resolve(short.caption_font, project.caption_font);
-    const captionPosition = resolve(short.caption_position, project.caption_position);
-    const captionLanguage = resolve(short.caption_language, project.caption_language);
-    const captionLineCount = resolve(short.caption_line_count, project.caption_line_count);
-
+    const legacy = usesWholeTrimmedFile(project);
     const clipPath = join(tmpDir, "clip.mp4");
-    const clipCroppedPath = join(tmpDir, "clip-cropped.mp4");
-    const clipAudioPath = join(tmpDir, "clip-audio.mp3");
-    const clipAssPath = join(tmpDir, "clip.ass");
-    const clipFinalPath = join(tmpDir, "clip-final.mp4");
-
-    await extractClipRange(trimmedPath, short.source_start_seconds, short.source_end_seconds, clipPath);
-
-    const target = multiClipTargetDimensions(ratio);
-    // A manual crop center (set via the Reframe tool) always wins over face-detection — same
-    // "this one thing always overrides" pattern as a caption preset's fontOverride.
-    const faceCenter =
-      short.crop_x != null && short.crop_y != null
-        ? { x: short.crop_x, y: short.crop_y }
-        : await detectFaceCenterFraction(clipPath, short.source_end_seconds - short.source_start_seconds);
-    await normalizeToTargetResolution(clipPath, clipCroppedPath, target.width, target.height, faceCenter);
-
-    // Skips the real Whisper call entirely for "none" — same real-cost-avoidance reasoning as
-    // pipeline.ts's own per-short loop.
-    let captionChunks: CaptionChunk[] = [];
-    if (captionStyle !== "none") {
-      await extractAudio(clipCroppedPath, clipAudioPath);
-      captionChunks = await transcribeCaptions(clipAudioPath, captionLanguage, captionLineCount);
+    if (legacy) {
+      // Charged before any of the metered Whisper/render calls below run — same "charge before the
+      // expensive work starts" ordering as the project-level charge_project_credits.
+      await chargeShortRegenerateCredit(short.id);
+      const trimmedPath = join(tmpDir, "trimmed.mp4");
+      await downloadToFile(project.trimmed_key as string, trimmedPath);
+      await extractClipRange(trimmedPath, short.source_start_seconds, short.source_end_seconds, clipPath);
+    } else {
+      // The footage is fetched first: a short whose footage is gone must not cost a credit.
+      await downloadClipSource(project, short, clipPath);
+      await chargeShortRegenerateCredit(short.id);
     }
-    const clipDimensions = await getVideoDimensions(clipCroppedPath);
-    await finalizeVideo(
-      clipCroppedPath,
-      captionChunks,
-      captionStyle,
-      captionFont,
-      captionPosition,
-      project.watermark,
-      clipDimensions.width,
-      clipDimensions.height,
-      clipFinalPath,
-      clipAssPath
-    );
 
-    const shortOutputKey = `${project.user_id}/shorts/${randomUUID()}.mp4`;
-    await uploadFromFile(clipFinalPath, shortOutputKey, "video/mp4");
+    // The size the footage was made at, so removing its dead air can't quietly shrink it.
+    const { width, height } = await getVideoDimensions(clipPath);
+    const workingLongEdge = Math.max(width, height) > STANDARD_LONG_EDGE ? HD_LONG_EDGE : STANDARD_LONG_EDGE;
 
-    // From the FINAL rendered output (captions/crop/watermark already applied), not the source —
-    // this should show exactly what the user will actually see, same reasoning as pipeline.ts's
-    // own per-short thumbnail step. A failure here shouldn't fail the whole regenerate, and
-    // deliberately doesn't touch thumbnail_key at all on failure (rather than nulling it out) —
-    // a short that already had a good thumbnail from an earlier render keeps it rather than
+    const { outputKey, thumbnailKey } = await renderShort({
+      sourcePath: clipPath,
+      workDir: tmpDir,
+      userId: project.user_id,
+      settings: {
+        ratio: resolve(short.ratio, project.ratio),
+        captionStyle: resolve(short.caption_style, project.caption_style),
+        captionFont: resolve(short.caption_font, project.caption_font),
+        captionPosition: resolve(short.caption_position, project.caption_position),
+        captionLanguage: resolve(short.caption_language, project.caption_language),
+        captionLineCount: resolve(short.caption_line_count, project.caption_line_count),
+        watermark: project.watermark,
+      },
+      // A manual crop center (set via the Reframe tool) always wins over face-detection — same
+      // "this one thing always overrides" pattern as a caption preset's fontOverride.
+      cropCenter: short.crop_x != null && short.crop_y != null ? { x: short.crop_x, y: short.crop_y } : null,
+      removeDeadAir: !legacy,
+      workingLongEdge,
+    });
+
+    // A failed thumbnail deliberately doesn't touch thumbnail_key at all (rather than nulling it
+    // out) — a short that already had a good thumbnail from an earlier render keeps it rather than
     // losing it to an unrelated hiccup in this one extraction.
-    const patch: Parameters<typeof updateShort>[1] = { status: "ready", output_key: shortOutputKey, error_message: null };
-    try {
-      const thumbPath = join(tmpDir, "thumbnail.jpg");
-      await extractFrame(clipFinalPath, 1, thumbPath);
-      const thumbnailKey = `${project.user_id}/thumbnails/${randomUUID()}.jpg`;
-      await uploadFromFile(thumbPath, thumbnailKey, "image/jpeg");
-      patch.thumbnail_key = thumbnailKey;
-    } catch (err) {
-      console.error(`Thumbnail extraction failed for short ${short.id} (non-fatal):`, err);
-    }
-
+    const patch: Parameters<typeof updateShort>[1] = { status: "ready", output_key: outputKey, error_message: null };
+    if (thumbnailKey) patch.thumbnail_key = thumbnailKey;
     await updateShort(short.id, patch);
   } catch (err) {
     console.error(`Regenerate failed for short ${short.id}:`, err);
@@ -128,26 +106,29 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
 }
 
 /**
- * Extracts one representative, UNCROPPED frame (the midpoint of the short's own time range) from
- * the project's persisted trimmed source, for the Reframe tool's crop-tool background — the
- * short's own already-rendered output can't be reused for this, since it's already cropped to
- * whatever ratio it was last rendered at and can't show content outside that frame.
+ * Extracts one representative, UNCROPPED frame (the midpoint of the short's own moment) from its
+ * saved footage, for the Reframe tool's crop-tool background — the short's own already-rendered
+ * output can't be reused for this, since it's already cropped to whatever ratio it was last rendered
+ * at and can't show content outside that frame.
  */
 export async function extractPreviewFrame(short: ShortRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-preview-"));
   try {
     const project = await getProject(short.project_id);
     if (!project) throw new Error(`No project ${short.project_id} for short ${short.id}`);
-    if (!project.trimmed_key) {
-      throw new Error("This project was generated before editing was supported, so there's no saved source to preview a crop from.");
+
+    const footagePath = join(tmpDir, "footage.mp4");
+    let midpoint: number;
+    if (usesWholeTrimmedFile(project)) {
+      await downloadToFile(project.trimmed_key as string, footagePath);
+      midpoint = (short.source_start_seconds + short.source_end_seconds) / 2;
+    } else {
+      await downloadClipSource(project, short, footagePath);
+      midpoint = (await getDuration(footagePath)) / 2;
     }
 
-    const trimmedPath = join(tmpDir, "trimmed.mp4");
-    await downloadToFile(project.trimmed_key, trimmedPath);
-
-    const midpoint = (short.source_start_seconds + short.source_end_seconds) / 2;
     const framePath = join(tmpDir, "preview.jpg");
-    await extractFrame(trimmedPath, midpoint, framePath);
+    await extractFrame(footagePath, midpoint, framePath);
 
     const previewKey = `${project.user_id}/preview/${randomUUID()}.jpg`;
     await uploadFromFile(framePath, previewKey, "image/jpeg");

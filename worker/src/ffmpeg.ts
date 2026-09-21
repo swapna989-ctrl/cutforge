@@ -136,21 +136,6 @@ export function getVideoDimensions(inputPath: string): Promise<{ width: number; 
 }
 
 /**
- * Decodes the source exactly once at its native resolution/codec and re-encodes it down to the
- * capped resolution immediately. Without this, cutSilences would re-open and re-decode the
- * original source once per kept segment — each decode pays the full native-resolution memory
- * cost regardless of output scale, since scaling happens after decode in the filter graph.
- */
-export function normalizeResolution(inputPath: string, outputPath: string, maxLongEdge: number = STANDARD_LONG_EDGE): Promise<void> {
-  return runFfmpeg(
-    ffmpeg(inputPath)
-      .inputOptions(DECODE_OPTS)
-      .outputOptions(["-vf", scaleFilter(maxLongEdge), "-c:v", "libx264", ...MEMORY_SAFE_X264, "-c:a", "aac"]),
-    outputPath
-  );
-}
-
-/**
  * Cuts out silences longer than the detection threshold (keeping a small pad around each cut
  * so it doesn't feel jarring) by extracting the "keep" segments and concatenating them.
  * `-ss`/`-t` with stream copy seeks to the nearest keyframe, which is imprecise — re-encoding
@@ -163,8 +148,8 @@ export async function cutSilences(
   duration: number,
   outputPath: string,
   tmpDir: string,
-  // Must match the cap normalizeResolution used, or this step would quietly shrink an HD working
-  // copy back down to the standard size.
+  // Must match the cap the footage was cut at (see cutWorkingCopy), or this step would quietly
+  // shrink an HD working copy back down to the standard size.
   maxLongEdge: number = STANDARD_LONG_EDGE
 ): Promise<void> {
   const PAD = 0.15;
@@ -184,7 +169,7 @@ export async function cutSilences(
 
   if (segments.length <= 1) {
     // Still re-encodes (rather than stream-copying) so the caps apply even when no dead air
-    // was found. A no-op once inputPath is already normalizeResolution()'d, kept as a safety net.
+    // was found. A no-op once inputPath is already at the cap, kept as a safety net.
     await runFfmpeg(
       ffmpeg(inputPath)
         .inputOptions(DECODE_OPTS)
@@ -245,6 +230,85 @@ export function extractClipRange(inputPath: string, startSeconds: number, endSec
   );
 }
 
+/** Where footage is read from: a local file, or a stream address the site wants certain headers on. */
+export type FootageInput = { source: string; headers?: Record<string, string> };
+
+// A slow or stalled stream must fail the one clip rather than hold the worker forever.
+const CUT_TIMEOUT_MS = 6 * 60 * 1000;
+
+/**
+ * Cuts ONE moment out of the source and encodes it as the working copy every later step uses: at most
+ * `maxLongEdge` on the long side, 30 fps, H.264 + AAC. This is the only place the source is read
+ * for a clip, so a moment from the middle of a 2-hour video costs the time and traffic of that moment
+ * alone (ffmpeg seeks straight to it) -- the whole video is never downloaded or re-encoded.
+ *
+ * `inputs` is one combined stream or a video stream followed by an audio stream. Stream addresses
+ * (http/https) are read over the network, with the headers the site expects and through `proxy` when
+ * given; anything else is a local file.
+ *
+ * Nothing that could identify an address, header, or the proxy's login is put in a thrown error: it
+ * ends up in logs, and the addresses are short-lived credentials while the proxy URL holds a password.
+ */
+export function cutWorkingCopy(
+  inputs: FootageInput[],
+  startSeconds: number,
+  durationSeconds: number,
+  outputPath: string,
+  maxLongEdge: number,
+  proxy: string | null = null
+): Promise<void> {
+  const args = ["-y", "-hide_banner", "-loglevel", "error", "-nostdin"];
+  for (const input of inputs) {
+    if (/^https?:\/\//i.test(input.source)) {
+      if (proxy) args.push("-http_proxy", proxy);
+      const headers = Object.entries(input.headers ?? {});
+      if (headers.length > 0) args.push("-headers", headers.map(([k, v]) => `${k}: ${v}`).join("\r\n") + "\r\n");
+      // A long read over the internet can be dropped part-way; picking it back up is far cheaper than
+      // failing the clip.
+      args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
+    }
+    args.push(...DECODE_OPTS, "-ss", String(startSeconds), "-i", input.source);
+  }
+  if (inputs.length === 2) args.push("-map", "0:v:0", "-map", "1:a:0");
+  else args.push("-map", "0:v:0", "-map", "0:a:0?");
+  args.push(
+    "-t",
+    String(durationSeconds),
+    "-vf",
+    scaleFilter(maxLongEdge),
+    "-c:v",
+    "libx264",
+    ...MEMORY_SAFE_X264,
+    "-c:a",
+    "aac",
+    "-avoid_negative_ts",
+    "make_zero",
+    outputPath
+  );
+
+  const safe = args.map((a, i) => (args[i - 1] === "-http_proxy" || args[i - 1] === "-headers" || /^https?:\/\//i.test(a) ? "<redacted>" : a));
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath as string, args, { timeout: CUT_TIMEOUT_MS, killSignal: "SIGKILL" });
+    const stderrTail: string[] = [];
+    proc.stderr.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().split("\n")) {
+        if (!line.trim()) continue;
+        stderrTail.push(line);
+        if (stderrTail.length > 25) stderrTail.shift();
+      }
+    });
+    proc.on("error", reject);
+    proc.on("close", (code, signal) => {
+      if (code === 0) return resolve();
+      const why = signal ? `killed by ${signal} (timed out after ${CUT_TIMEOUT_MS / 1000}s?)` : `exited with code ${code}`;
+      // The stderr tail can quote an address (ffmpeg names the URL it failed to open), so it is
+      // scrubbed the same way as the command line.
+      const scrubbed = stderrTail.join("\n").replace(/https?:\/\/\S+/g, "<redacted>");
+      reject(new Error(`ffmpeg ${why}\ncmd: ${safe.join(" ")}\nstderr tail:\n${scrubbed}`));
+    });
+  });
+}
+
 // One shared target size per project ratio, used only to bring multiple clips of possibly
 // different native resolutions into an identical format before concatenation. Matches the
 // existing 1280-long-edge memory budget (see SCALE_FILTER's own comment) so multi-clip encodes
@@ -262,7 +326,7 @@ export function multiClipTargetDimensions(ratio: "9:16" | "16:9" | "1:1"): { wid
 }
 
 /**
- * Normalizes one clip to an EXACT, caller-specified resolution — unlike normalizeResolution
+ * Normalizes one clip to an EXACT, caller-specified resolution — unlike a long-edge cap
  * (which scales each source relative to its own aspect ratio, so two differently-shaped
  * sources can land on two different output sizes), every clip run through this function for
  * the same project ends up with identical width/height/codec/pixel format/frame rate. That's

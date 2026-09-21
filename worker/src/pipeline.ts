@@ -1,38 +1,33 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir, cpus, totalmem, freemem } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
-import { downloadFromUrl, fetchVideoInfo, type VideoInfo } from "./ytdlp.js";
+import { downloadAudioFromUrl, fetchVideoInfo, resolveStreams, type VideoInfo } from "./ytdlp.js";
 import { parseVideoUrl, PLATFORM_LABEL } from "./videoUrl.js";
 import {
-  detectSilences,
   getDuration,
   getVideoDimensions,
-  cutSilences,
-  extractAudio,
   extractPlanningAudio,
-  extractClipRange,
-  extractFrame,
-  finalizeVideo,
-  normalizeResolution,
+  cutWorkingCopy,
   normalizeToTargetResolution,
   multiClipTargetDimensions,
   concatClips,
   STANDARD_LONG_EDGE,
   HD_LONG_EDGE,
+  type FootageInput,
 } from "./ffmpeg.js";
 import { wantsHdWorkingCopy, linkedDownloadMaxHeight } from "./quality.js";
 import { creditsForSeconds } from "./credits.js";
-import { transcribeCaptions, transcribeSegments, type CaptionChunk } from "./transcribe.js";
+import { transcribeSegments } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
-import { detectFaceCenterFraction } from "./faceCrop.js";
+import { renderShort, clipSourceKey, type RenderSettings } from "./render.js";
+import { runPool, clipConcurrency } from "./pool.js";
 import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, getAvailableCredits, type ProjectRow } from "./supabase.js";
 import { toUserMessage, UserFacingError, DownloadBlockedError } from "./errors.js";
 import { scheduleBlockedRetry, clearBlockedRetry } from "./blockedRetry.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
-export const WORKER_BUILD = "2026-09-20-hd-working-copy";
+export const WORKER_BUILD = "2026-09-22-transcript-first";
 
 const MB = 1024 * 1024;
 
@@ -54,6 +49,7 @@ export function environmentReport(): string {
     `build=${WORKER_BUILD}`,
     `cpus=${cpus().length}`,
     `totalmem=${Math.round(totalmem() / MB)}MB`,
+    `constrainedmem=${Math.round((process.constrainedMemory?.() ?? 0) / MB)}MB`,
     `freemem=${Math.round(freemem() / MB)}MB`,
     `noderss=${Math.round(process.memoryUsage().rss / MB)}MB`,
   ].join(" ");
@@ -100,32 +96,69 @@ async function checkLinkedVideo(job: ProjectRow, info: VideoInfo): Promise<void>
   }
 }
 
+/** Where each short's picture is cut from: a file on this machine, or a video site's stream. */
+type Footage = {
+  inputs: FootageInput[];
+  /** The long-edge cap for the working copy of each moment (see quality.ts). */
+  longEdge: number;
+  /** The proxy the stream must be read through, if any (see resolveStreams). */
+  proxy: string | null;
+};
+
+/**
+ * Cuts one moment out of the footage. A stream can drop or refuse a read for reasons that pass on
+ * their own, so it gets a second try; what a second failure means is the same for every short, so it
+ * is reported once, in words a user can act on.
+ */
+async function cutMoment(footage: Footage, startSeconds: number, endSeconds: number, outputPath: string): Promise<void> {
+  const isStream = footage.inputs.some((i) => /^https?:\/\//i.test(i.source));
+  const attempts = isStream ? 2 : 1;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await cutWorkingCopy(footage.inputs, startSeconds, endSeconds - startSeconds, outputPath, footage.longEdge, footage.proxy);
+      const { size } = await stat(outputPath);
+      if (size < 10_000) throw new Error(`Cut clip is suspiciously small (${size} bytes)`);
+      return;
+    } catch (err) {
+      lastError = err;
+      console.error(`Cutting ${startSeconds.toFixed(1)}-${endSeconds.toFixed(1)}s failed (attempt ${attempt}/${attempts}):`, err);
+      if (attempt < attempts) await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  if (isStream) {
+    throw new UserFacingError("We couldn't fetch this part of the video from the video site. Paste the link again to retry, or upload the file instead.");
+  }
+  throw lastError;
+}
+
 export async function processJob(job: ProjectRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-"));
-  const normalizedPath = join(tmpDir, "normalized.mp4");
-  const trimmedPath = join(tmpDir, "trimmed.mp4");
 
   try {
     const clips = await getProjectClips(job.id);
-    // How large the working copy is kept while it is trimmed and cut into shorts; decided once the
-    // source is on disk (see quality.ts) and reused by the silence cut below so it can't undo it.
-    let workingLongEdge = STANDARD_LONG_EDGE;
+
+    // Whatever the source, the job ends up knowing three things before any expensive step: the file
+    // its transcription audio is read from, where each moment's picture will be cut from, and how
+    // long the video is.
+    let planningInput: string;
+    let footage: Footage;
+    let duration: number;
 
     if (clips.length > 0) {
       // Multi-clip path: download and normalize each source clip individually (same
       // per-clip cost as the single-clip path below, just repeated in order), then
-      // concatenate the normalized clips into exactly the kind of file normalizeResolution
-      // itself would have produced — everything from here on is the existing pipeline,
+      // concatenate the normalized clips into one file — everything from here on is
       // completely unaware that its input came from more than one source file.
       // Every clip must land on the exact same width/height/codec/pixel format/frame rate before
-      // concatClips can safely stream-copy them together — normalizeResolution alone doesn't
+      // concatClips can safely stream-copy them together — a long-edge cap alone doesn't
       // guarantee that, since it scales each source relative to its own aspect ratio, so two
       // differently-shaped clips can (and did, in testing) come out at two different sizes.
       const target = multiClipTargetDimensions(job.ratio);
       const clipPaths: string[] = [];
       for (let i = 0; i < clips.length; i++) {
         const clip = clips[i];
-        const clipProgress = 10 + Math.round((i / clips.length) * 10);
+        const clipProgress = 3 + Math.round((i / clips.length) * 10);
         await updateJob(job.id, {
           status_message: `Downloading clip ${i + 1} of ${clips.length}…`,
           progress: clipProgress,
@@ -137,67 +170,78 @@ export async function processJob(job: ProjectRow): Promise<void> {
         clipPaths.push(clipNormalizedPath);
       }
 
-      await updateJob(job.id, { status_message: "Combining clips…", progress: 20 });
-      await concatClips(clipPaths, normalizedPath, tmpDir);
+      await updateJob(job.id, { status_message: "Combining clips…", progress: 14 });
+      const combinedPath = join(tmpDir, "combined.mp4");
+      await concatClips(clipPaths, combinedPath, tmpDir);
+      duration = await getDuration(combinedPath);
+      planningInput = combinedPath;
+      footage = { inputs: [{ source: combinedPath }], longEdge: STANDARD_LONG_EDGE, proxy: null };
+    } else if (job.source_url && !job.source_key) {
+      // Link-based project. Only the SOUND is downloaded up front: that is all it takes to transcribe
+      // the video and choose its clips, and it is a tenth of the traffic of the picture. Each chosen
+      // moment's picture is then read straight out of the site's own stream (see resolveStreams and
+      // cutWorkingCopy), so a 2-hour video never has to be downloaded, stored, or re-encoded whole.
+      // The link was written by the user's own browser, so it's re-validated here (the frontend
+      // check is just a courtesy) and rewritten to one canonical YouTube/Twitch form -- this is
+      // what stops the worker being pointed at an arbitrary address.
+      const link = parseVideoUrl(job.source_url);
+      if (!link.ok) throw new UserFacingError(link.message);
+      const platform = PLATFORM_LABEL[link.platform];
+
+      await updateJob(job.id, { status_message: `Checking your ${platform} link…`, progress: 3 });
+      const info = await fetchVideoInfo(link.url);
+      await checkLinkedVideo(job, info);
+      // Until now the project's name was just the pasted address; the real title is what the
+      // user recognizes on their dashboard.
+      if (info.title) await updateJob(job.id, { name: info.title.slice(0, 150) });
+
+      await updateJob(job.id, { status_message: `Downloading the audio from ${platform}…`, progress: 5 });
+      const audioPath = join(tmpDir, "source-audio");
+      let lastReportedPercent = 0;
+      let lastReportedAt = 0;
+      await downloadAudioFromUrl(link.url, audioPath, (percent) => {
+        const now = Date.now();
+        // Progress arrives many times a second; the database only needs a heartbeat.
+        if ((percent - lastReportedPercent < 5 && percent < 100) || now - lastReportedAt < 4000) return;
+        lastReportedPercent = percent;
+        lastReportedAt = now;
+        updateJob(job.id, { status_message: `Downloading the audio from ${platform}… ${percent}%`, progress: 5 + Math.floor(percent * 0.07) }).catch(() => {});
+      });
+
+      // Looked up now, before any paid step, so a site that refuses it is retried (see the catch
+      // below) while nothing has been spent -- and so the picture size is known.
+      await updateJob(job.id, { status_message: `Preparing the ${platform} video…`, progress: 13 });
+      const streams = await resolveStreams(link.url, linkedDownloadMaxHeight(job.ratio));
+      const hd = wantsHdWorkingCopy(job.ratio, streams.width > 0 && streams.height > 0 ? streams : undefined);
+      console.log(`[quality] job ${job.id}: stream ${streams.width}x${streams.height}, ratio ${job.ratio} -> working copy capped at ${hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE}px`);
+
+      duration = await getDuration(audioPath);
+      planningInput = audioPath;
+      footage = {
+        inputs: streams.inputs.map((s) => ({ source: s.url, headers: s.headers })),
+        longEdge: hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE,
+        proxy: streams.proxy,
+      };
     } else {
+      if (!job.source_key) throw new Error("Job has no source_key and no source_url");
       const sourcePath = join(tmpDir, "source.mp4");
+      await updateJob(job.id, { status_message: "Downloading your video…", progress: 5 });
+      await downloadToFile(job.source_key, sourcePath);
 
-      if (job.source_url && !job.source_key) {
-        // Link-based project: fetch the real video first, then persist it to R2 exactly like an
-        // uploaded file would be (same key pattern, same bucket) — everything from here on
-        // (normalize, dead-air removal, transcription, clip planning) is completely unaware
-        // whether the source arrived via upload or a link.
-        // The link was written by the user's own browser, so it's re-validated here (the frontend
-        // check is just a courtesy) and rewritten to one canonical YouTube/Twitch form -- this is
-        // what stops the worker being pointed at an arbitrary address.
-        const link = parseVideoUrl(job.source_url);
-        if (!link.ok) throw new UserFacingError(link.message);
-        const platform = PLATFORM_LABEL[link.platform];
-
-        await updateJob(job.id, { status_message: `Checking your ${platform} link…`, progress: 3 });
-        const info = await fetchVideoInfo(link.url);
-        await checkLinkedVideo(job, info);
-        // Until now the project's name was just the pasted address; the real title is what the
-        // user recognizes on their dashboard.
-        if (info.title) await updateJob(job.id, { name: info.title.slice(0, 150) });
-
-        await updateJob(job.id, { status_message: `Downloading from ${platform}…`, progress: 5 });
-        let lastReportedPercent = 0;
-        let lastReportedAt = 0;
-        const maxHeight = linkedDownloadMaxHeight(job.ratio, info.durationSeconds);
-        await downloadFromUrl(link.url, sourcePath, (percent) => {
-          const now = Date.now();
-          // Progress arrives many times a second; the database only needs a heartbeat.
-          if ((percent - lastReportedPercent < 5 && percent < 100) || now - lastReportedAt < 4000) return;
-          lastReportedPercent = percent;
-          lastReportedAt = now;
-          updateJob(job.id, { status_message: `Downloading from ${platform}… ${percent}%`, progress: 5 + Math.floor(percent * 0.03) }).catch(() => {});
-        }, maxHeight);
-
-        await updateJob(job.id, { status_message: "Saving source…", progress: 8 });
-        const sourceKey = `${job.user_id}/source/${randomUUID()}.mp4`;
-        await uploadFromFile(sourcePath, sourceKey, "video/mp4");
-        await updateJob(job.id, { source_key: sourceKey });
-      } else {
-        if (!job.source_key) throw new Error("Job has no source_key and no source_url");
-        await updateJob(job.id, { status_message: "Downloading your clip…", progress: 10 });
-        await downloadToFile(job.source_key, sourcePath);
-      }
-
-      // Decodes the (possibly 4K/HEVC) source exactly once and re-encodes it down to a capped
-      // resolution — every step after this works off the much cheaper result, which is what
-      // actually keeps memory under Railway's 1GB container limit for real phone footage.
-      await updateJob(job.id, { status_message: "Preparing footage…", progress: 15 });
-      const [sourceSeconds, sourceDimensions] = await Promise.all([getDuration(sourcePath), getVideoDimensions(sourcePath)]);
-      workingLongEdge = wantsHdWorkingCopy(job.ratio, sourceSeconds, sourceDimensions) ? HD_LONG_EDGE : STANDARD_LONG_EDGE;
+      // The upload is read in place: nothing is re-encoded up front. Each chosen moment is cut out of
+      // it and only that moment is decoded (see cutWorkingCopy), which is also what keeps memory low
+      // for big phone footage (4K/HEVC) -- one short moment at a time, never the whole file.
+      await updateJob(job.id, { status_message: "Preparing footage…", progress: 12 });
+      const [sourceDuration, sourceDimensions] = await Promise.all([getDuration(sourcePath), getVideoDimensions(sourcePath)]);
+      const hd = wantsHdWorkingCopy(job.ratio, sourceDimensions);
       console.log(
-        `[quality] job ${job.id}: ${sourceDimensions.width}x${sourceDimensions.height}, ${Math.round(sourceSeconds)}s, ratio ${job.ratio} -> working copy capped at ${workingLongEdge}px`
+        `[quality] job ${job.id}: ${sourceDimensions.width}x${sourceDimensions.height}, ${Math.round(sourceDuration)}s, ratio ${job.ratio} -> working copy capped at ${hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE}px`
       );
-      await normalizeResolution(sourcePath, normalizedPath, workingLongEdge);
+      duration = sourceDuration;
+      planningInput = sourcePath;
+      footage = { inputs: [{ source: sourcePath }], longEdge: hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE, proxy: null };
     }
 
-    await updateJob(job.id, { status_message: "Detecting scene boundaries…", progress: 20 });
-    const duration = await getDuration(normalizedPath);
     if (duration < MIN_VIDEO_SECONDS) {
       throw new Error(`Video is too short (${Math.round(duration)}s) — must be at least 5 minutes long.`);
     }
@@ -206,124 +250,92 @@ export async function processJob(job: ProjectRow): Promise<void> {
     }
 
     // The real charge, for the real duration — before any of the metered Whisper/LLM calls
-    // below run, so a video the owner can't actually afford fails here (cheap: just download +
-    // normalize) instead of after real OpenAI usage has already been spent on it. Also decides
+    // below run, so a video the owner can't actually afford fails here (cheap: just the audio or
+    // the file) instead of after real OpenAI usage has already been spent on it. Also decides
     // watermark for the whole project, since that's exactly this same charge's outcome (a plan or
     // paid credit buys watermark-free; a free credit doesn't) — see charge_project_credits.
-    await updateJob(job.id, { status_message: "Charging credits…", progress: 22 });
+    await updateJob(job.id, { status_message: "Charging credits…", progress: 16 });
     const { watermarkFree } = await chargeProjectCredits(job.id, duration);
     job.watermark = !watermarkFree;
 
-    const silences = await detectSilences(normalizedPath);
-
-    await updateJob(job.id, { status_message: "Removing dead air & filler pauses…", progress: 40 });
-    await cutSilences(normalizedPath, silences, duration, trimmedPath, tmpDir, workingLongEdge);
-
-    // Persisted permanently (unlike every other file in tmpDir) so a short can be re-edited later
-    // — short.source_start_seconds/end_seconds are positions in THIS trimmed timeline, not the
-    // raw upload, so correctly re-extracting a short's footage after this job finishes requires
-    // this exact file, not a fresh normalize+cut that could land on a different result.
-    const trimmedKey = `${job.user_id}/trimmed/${job.id}.mp4`;
-    await uploadFromFile(trimmedPath, trimmedKey, "video/mp4");
-    await updateJob(job.id, { trimmed_key: trimmedKey });
-
-    // From here on the source is a single, clean (dead-air-trimmed) video — the AI Clip Planner
-    // reasons over that ONE transcript/timeline once, rather than per-candidate, so planning
-    // cost depends on the source's length, never on how many shorts eventually get rendered.
-    await updateJob(job.id, { status_message: "Analyzing transcript for clip-worthy moments…", progress: 50 });
+    // The transcript of the WHOLE video, read once, is what decides every clip -- planning cost
+    // depends on the video's length, never on how many shorts eventually get rendered. Positions in
+    // it are positions in the original video, so a short's [start - end] is where it really is.
+    await updateJob(job.id, { status_message: "Transcribing the audio…", progress: 20 });
     const planningAudioPath = join(tmpDir, "planning-audio.mp3");
-    await extractPlanningAudio(trimmedPath, planningAudioPath);
-    const trimmedDuration = await getDuration(trimmedPath);
+    await extractPlanningAudio(planningInput, planningAudioPath);
     // Duration and tmpDir let this split audio too long for Whisper into pieces it accepts.
-    const segments = await transcribeSegments(planningAudioPath, job.caption_language, trimmedDuration, tmpDir);
+    const segments = await transcribeSegments(planningAudioPath, job.caption_language, duration, tmpDir);
 
-    await updateJob(job.id, { status_message: "Planning clips…", progress: 55 });
-    const candidates = await planClips(segments, trimmedDuration, job.clip_length);
+    await updateJob(job.id, { status_message: "Finding the best moments…", progress: 45 });
+    const candidates = await planClips(segments, duration, job.clip_length);
     const shorts = await createShorts(job.id, candidates);
 
-    // Each short is rendered independently, through the same download-free steps the old
-    // single-output path used (extract -> transcribe -> caption -> watermark -> upload) — one
-    // short failing to render is recorded on that short and doesn't take the others down with it.
+    // Each short is cut, rendered and uploaded independently, a few at a time — one failing is
+    // recorded on that short and doesn't take the others down with it. Each works in its own
+    // directory that is deleted the moment it finishes, so a 50-clip job never holds 50 clips' worth
+    // of files on disk at once.
+    const settings: RenderSettings = {
+      ratio: job.ratio,
+      captionStyle: job.caption_style,
+      captionFont: job.caption_font,
+      captionPosition: job.caption_position,
+      captionLanguage: job.caption_language,
+      captionLineCount: job.caption_line_count,
+      watermark: job.watermark,
+    };
+    const concurrency = clipConcurrency();
+    console.log(`[render] job ${job.id}: ${shorts.length} shorts, ${concurrency} at a time [env] ${environmentReport()}`);
+    await updateJob(job.id, { status_message: `Creating your ${shorts.length} clips…`, progress: 50 });
+
     let readyCount = 0;
-    for (let i = 0; i < shorts.length; i++) {
-      const short = shorts[i];
-      const candidate = candidates[i];
-      const renderProgress = 60 + Math.round((i / shorts.length) * 35);
-      await updateJob(job.id, {
-        status_message: `Rendering short ${i + 1} of ${shorts.length}…`,
-        progress: renderProgress,
-      });
-
-      try {
-        await updateShort(short.id, { status: "processing" });
-
-        const clipPath = join(tmpDir, `short-${i}.mp4`);
-        const clipCroppedPath = join(tmpDir, `short-${i}-cropped.mp4`);
-        const clipAudioPath = join(tmpDir, `short-${i}-audio.mp3`);
-        const clipAssPath = join(tmpDir, `short-${i}.ass`);
-        const clipFinalPath = join(tmpDir, `short-${i}-final.mp4`);
-
-        await extractClipRange(trimmedPath, candidate.startTime, candidate.endTime, clipPath);
-
-        // Forces the user's actual chosen ratio here, regardless of which upstream branch
-        // produced clipPath — confirmed against real project data that most projects never hit
-        // the (rare) multi-clip branch that used to be the only place this ratio was enforced,
-        // so job.ratio was silently ignored for almost every real upload. Face-aware when a face
-        // is actually found (see faceCrop.ts); falls back to plain center-crop otherwise, same
-        // as the previous behavior for anything that does reach this shape-forcing step.
-        const target = multiClipTargetDimensions(job.ratio);
-        const faceCenter = await detectFaceCenterFraction(clipPath, candidate.endTime - candidate.startTime);
-        await normalizeToTargetResolution(clipPath, clipCroppedPath, target.width, target.height, faceCenter);
-
-        // Skips the real Whisper call entirely for "none" — nothing will be burned in, so paying
-        // for a transcription no render step will ever read would be pure waste.
-        let captionChunks: CaptionChunk[] = [];
-        if (job.caption_style !== "none") {
-          await extractAudio(clipCroppedPath, clipAudioPath);
-          captionChunks = await transcribeCaptions(clipAudioPath, job.caption_language, job.caption_line_count);
-        }
-        const clipDimensions = await getVideoDimensions(clipCroppedPath);
-        await finalizeVideo(
-          clipCroppedPath,
-          captionChunks,
-          job.caption_style,
-          job.caption_font,
-          job.caption_position,
-          job.watermark,
-          clipDimensions.width,
-          clipDimensions.height,
-          clipFinalPath,
-          clipAssPath
-        );
-
-        const shortOutputKey = `${job.user_id}/shorts/${randomUUID()}.mp4`;
-        await uploadFromFile(clipFinalPath, shortOutputKey, "video/mp4");
-
-        // From the FINAL rendered output (captions/crop/watermark already applied), not the
-        // source — this should show exactly what the user will actually see. Mobile Safari/
-        // WebKit doesn't reliably self-render a <video> element's first frame from
-        // preload="metadata" alone (confirmed: worked on desktop, stayed blank on phone), so the
-        // frontend uses this as a real <video poster> instead of relying on that. Non-fatal —
-        // a failed extraction just means no thumbnail yet, not a failed short.
-        let thumbnailKey: string | null = null;
+    let finishedCount = 0;
+    await runPool(
+      shorts.map((short, i) => ({ short, candidate: candidates[i] })),
+      concurrency,
+      async ({ short, candidate }, i) => {
+        const workDir = await mkdtemp(join(tmpDir, `short-${i}-`));
         try {
-          const thumbPath = join(tmpDir, `short-${i}-thumb.jpg`);
-          await extractFrame(clipFinalPath, 1, thumbPath);
-          thumbnailKey = `${job.user_id}/thumbnails/${randomUUID()}.jpg`;
-          await uploadFromFile(thumbPath, thumbnailKey, "image/jpeg");
-        } catch (err) {
-          console.error(`Thumbnail extraction failed for short ${short.id} (non-fatal):`, err);
-        }
+          await updateShort(short.id, { status: "processing" });
 
-        await updateShort(short.id, { status: "ready", output_key: shortOutputKey, thumbnail_key: thumbnailKey });
-        readyCount++;
-      } catch (err) {
-        console.error(`Short ${short.id} (project ${job.id}) failed:`, err);
-        await updateShort(short.id, { status: "failed", error_message: toUserMessage(err) }).catch((updateErr) =>
-          console.error("Also failed to record the short's failure:", updateErr)
-        );
+          const sourcePath = join(workDir, "source.mp4");
+          const cutStartedAt = Date.now();
+          await cutMoment(footage, candidate.startTime, candidate.endTime, sourcePath);
+          const cutSeconds = Math.round((Date.now() - cutStartedAt) / 1000);
+
+          // Kept so this short can be re-edited later (see regenerate.ts): for a linked video the
+          // original is never stored, and even for an upload this is far smaller to fetch back.
+          // Non-fatal -- the short itself is what the user asked for.
+          await uploadFromFile(sourcePath, clipSourceKey(job.user_id, short.id), "video/mp4").catch((err) =>
+            console.error(`Couldn't save the editing copy of short ${short.id} (non-fatal):`, err)
+          );
+
+          const { outputKey, thumbnailKey } = await renderShort({
+            sourcePath,
+            workDir,
+            userId: job.user_id,
+            settings,
+            removeDeadAir: true,
+            workingLongEdge: footage.longEdge,
+          });
+          await updateShort(short.id, { status: "ready", output_key: outputKey, thumbnail_key: thumbnailKey });
+          readyCount++;
+          console.log(`[render] short ${i + 1}/${shorts.length}: cut ${cutSeconds}s, whole short ${Math.round((Date.now() - cutStartedAt) / 1000)}s`);
+        } catch (err) {
+          console.error(`Short ${short.id} (project ${job.id}) failed:`, err);
+          await updateShort(short.id, { status: "failed", error_message: toUserMessage(err) }).catch((updateErr) =>
+            console.error("Also failed to record the short's failure:", updateErr)
+          );
+        } finally {
+          await rm(workDir, { recursive: true, force: true }).catch(() => {});
+          finishedCount++;
+          await updateJob(job.id, {
+            status_message: `Creating your clips… ${finishedCount} of ${shorts.length} done`,
+            progress: 50 + Math.round((finishedCount / shorts.length) * 45),
+          }).catch(() => {});
+        }
       }
-    }
+    );
 
     if (readyCount === 0) {
       throw new Error(`All ${shorts.length} planned shorts failed to render`);
@@ -339,6 +351,8 @@ export async function processJob(job: ProjectRow): Promise<void> {
     // The video site refused our servers (YouTube's bot check, a rate limit). That often passes by
     // itself, so instead of failing the job it goes back in the queue and is tried again after a
     // wait (see blockedRetry.ts); only once the retries are used up does the user see the failure.
+    // This can only happen before any short exists (the audio download and the stream lookup), so a
+    // retry never leaves duplicates behind.
     if (err instanceof DownloadBlockedError) {
       const retry = scheduleBlockedRetry(job.id);
       if (retry) {

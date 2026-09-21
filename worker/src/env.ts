@@ -17,6 +17,14 @@ function ffmpegThreads(raw: string | undefined): number {
   return Number.isInteger(n) && n >= 1 && n <= 8 ? n : 2;
 }
 
+// How many short clips are cut and rendered at the same time. Unset means "work it out from the
+// memory this container really has" (see pool.ts); a whole number from 1 to 6 overrides that, e.g.
+// once a bigger Railway plan is in place. Anything else is ignored rather than trusted.
+function parseClipConcurrency(raw: string | undefined): number | null {
+  const n = Number(raw?.trim());
+  return Number.isInteger(n) && n >= 1 && n <= 6 ? n : null;
+}
+
 export const env = {
   SUPABASE_URL: required("SUPABASE_URL"),
   SUPABASE_SERVICE_ROLE_KEY: required("SUPABASE_SERVICE_ROLE_KEY"),
@@ -27,6 +35,7 @@ export const env = {
   OPENAI_API_KEY: required("OPENAI_API_KEY"),
   POLL_INTERVAL_MS: Number(process.env.POLL_INTERVAL_MS ?? 4000),
   FFMPEG_THREADS: ffmpegThreads(process.env.FFMPEG_THREADS),
+  CLIP_CONCURRENCY: parseClipConcurrency(process.env.CLIP_CONCURRENCY),
   // Optional — the Netscape-format cookies.txt contents for a dedicated (throwaway, not a real
   // user's) YouTube account, used so yt-dlp looks like a logged-in browser instead of an
   // anonymous request from a datacenter IP. YouTube blocks the latter outright ("Sign in to

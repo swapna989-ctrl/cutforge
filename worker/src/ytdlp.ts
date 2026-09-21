@@ -59,7 +59,7 @@ function formatArgs(maxHeight: number): string[] {
 // video: ~90s+ cold, ~16s once yt-dlp's cache is warm) while still bounding the worst case. This
 // worker processes one job at a time, so a download that hangs for real (network stall, an
 // interactive prompt yt-dlp is silently waiting on) would otherwise block it forever.
-const DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
+const DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
 const INFO_TIMEOUT_MS = 90 * 1000;
 
 function isYouTube(url: string): boolean {
@@ -272,23 +272,15 @@ export async function logYtDlpVersion(): Promise<void> {
   }
 }
 
-async function runYtDlp(url: string, outputPath: string, maxHeight: number, onProgress?: (percent: number) => void): Promise<void> {
+async function runYtDlp(url: string, outputPath: string, selection: string[], onProgress?: (percent: number) => void): Promise<void> {
   const args = [
     url,
-    ...formatArgs(maxHeight),
-    "--merge-output-format",
-    "mp4",
+    ...selection,
     "--ffmpeg-location",
     ffmpegPath as string,
     // One progress line per update instead of carriage-return overwrites, so it can be parsed --
     // and so stdout is actually consumed below (an unread pipe that fills up stalls the process).
     "--newline",
-    // Twitch VODs and YouTube's segmented streams download in fragments; fetching a few at once
-    // is the difference between minutes and tens of minutes for a long recording.
-    "--concurrent-fragments",
-    "4",
-    "--fragment-retries",
-    "10",
     "-o",
     outputPath,
     ...(await commonArgs(url)),
@@ -340,27 +332,32 @@ async function runYtDlp(url: string, outputPath: string, maxHeight: number, onPr
 }
 
 /**
- * Downloads a video from a (pre-validated -- see videoUrl.ts) YouTube/Twitch URL to a local file.
- * Uses the standalone yt-dlp binary fetched at install time (see scripts/download-ytdlp.mjs) —
+ * Downloads just the SOUND of a (pre-validated -- see videoUrl.ts) YouTube/Twitch link to a local
+ * file. That is all it takes to transcribe a video and choose its clips, and it is about a tenth of the
+ * traffic of the video itself (a 2-hour video's audio is ~110 MB against ~1 GB of 720p picture) --
+ * which matters twice over: it is faster, and residential proxies bill per gigabyte. The picture for
+ * each chosen moment is fetched afterwards, and only for that moment (see resolveStreams).
+ *
+ * `ba/w` is the best audio-only stream, or failing that the WORST combined stream (never the best:
+ * that would be the multi-gigabyte picture this exists to avoid).
+ *
+ * Uses the standalone yt-dlp binary fetched at install time (see scripts/download-ytdlp.mjs) --
  * no Python dependency, the same "-static" approach this project already uses for ffmpeg.
  *
  * Throws UserFacingError for anything a user can act on (private/removed/blocked); a failure it
  * can't explain becomes the generic download message, with the real detail in the logs.
  */
-export async function downloadFromUrl(
-  url: string,
-  outputPath: string,
-  onProgress?: (percent: number) => void,
-  /** The tallest picture to fetch; 720 unless the caller says the job will use a bigger one. */
-  maxHeight: number = 720
-): Promise<void> {
+export async function downloadAudioFromUrl(url: string, outputPath: string, onProgress?: (percent: number) => void): Promise<void> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
   let updatedYtDlp = false;
+  // Twitch VODs and YouTube's segmented streams download in fragments; fetching a few at once is
+  // the difference between minutes and tens of minutes for a long recording.
+  const selection = ["-f", "ba/w", "--concurrent-fragments", "4", "--fragment-retries", "10"];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await runYtDlp(url, outputPath, maxHeight, onProgress);
+      await runYtDlp(url, outputPath, selection, onProgress);
 
       // yt-dlp exiting 0 doesn't guarantee a real, complete file landed (seen with geo-restricted
       // or partially-available sources) — check for real bytes rather than trusting exit code alone.
@@ -393,4 +390,77 @@ export async function downloadFromUrl(
 
   console.error(`Failed to download ${url} after ${MAX_ATTEMPTS} attempts:`, lastError instanceof Error ? lastError.message : String(lastError));
   throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
+}
+
+/** One media stream ffmpeg can read directly, with the request headers the site expects. */
+export type StreamInput = { url: string; headers: Record<string, string> };
+
+export type ResolvedStreams = {
+  /** One combined stream (Twitch) or a video stream followed by an audio stream (YouTube). */
+  inputs: StreamInput[];
+  /** Picture size of the chosen stream, which decides how big the working copy is (see quality.ts). */
+  width: number;
+  height: number;
+  /** The proxy ffmpeg must reach these addresses through, when the site has to be asked via one.
+   *  YouTube ties a stream address to the IP that asked for it, so the bytes go the same way. */
+  proxy: string | null;
+};
+
+/**
+ * Asks yt-dlp for the direct stream addresses of a link at the given picture height, WITHOUT
+ * downloading anything. ffmpeg can then read just the seconds it needs out of each stream, so a clip
+ * from the middle of a 2-hour video costs the traffic of that clip, not of the whole video.
+ *
+ * This is one extraction for the whole job rather than one per clip: each extraction is a fresh
+ * request the site can refuse, and through a proxy it is billed. The addresses are good for hours.
+ */
+export async function resolveStreams(url: string, maxHeight: number): Promise<ResolvedStreams> {
+  const result = await runCapture(
+    [
+      url,
+      "--skip-download",
+      ...formatArgs(maxHeight),
+      "--print",
+      "%(.{requested_formats,url,http_headers,width,height,vcodec,protocol})j",
+      ...(await commonArgs(url)),
+    ],
+    INFO_TIMEOUT_MS
+  );
+
+  if (result.code !== 0) {
+    console.error(`[ytdlp] stream lookup failed (code ${result.code}${result.timedOut ? ", timed out" : ""}):`, result.stderr.trim().split("\n").slice(-6).join(" | "));
+    const known = explainYtDlpFailure(result.stderr);
+    if (known) throw failureToError(known);
+    throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
+  }
+
+  type Format = { url?: string; http_headers?: Record<string, string>; width?: number | null; height?: number | null; vcodec?: string; protocol?: string };
+  let parsed: { requested_formats?: Format[] } & Format;
+  try {
+    parsed = JSON.parse(result.stdout.trim().split("\n").filter(Boolean).pop() ?? "");
+  } catch {
+    console.error("[ytdlp] couldn't parse stream output:", result.stdout.slice(0, 200));
+    throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
+  }
+
+  const formats = (parsed.requested_formats?.length ? parsed.requested_formats : [parsed]).filter((f) => typeof f.url === "string" && f.url);
+  if (formats.length === 0) {
+    console.error("[ytdlp] stream lookup returned no usable stream address");
+    throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
+  }
+  // ffmpeg can only read plain addresses and HLS playlists; anything fragment-by-fragment would need
+  // yt-dlp's own downloader, which this path doesn't use.
+  const unsupported = formats.find((f) => f.protocol && !/^(https?|m3u8|m3u8_native)$/.test(f.protocol));
+  if (unsupported) {
+    console.error(`[ytdlp] stream uses protocol "${unsupported.protocol}", which ffmpeg can't read directly`);
+    throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
+  }
+
+  const picture = formats.find((f) => f.vcodec !== "none" && f.width && f.height) ?? formats[0];
+  return {
+    inputs: formats.map((f) => ({ url: f.url as string, headers: f.http_headers ?? {} })),
+    width: picture.width ?? 0,
+    height: picture.height ?? 0,
+    proxy: env.YTDLP_PROXY && isYouTube(url) ? env.YTDLP_PROXY : null,
+  };
 }
