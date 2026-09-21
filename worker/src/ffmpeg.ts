@@ -348,6 +348,34 @@ export function extractAudio(inputPath: string, outputPath: string): Promise<voi
 }
 
 /**
+ * Audio for whole-video transcription: mono, 16 kHz, 48 kbps -- the format Whisper resamples
+ * everything to internally anyway, so nothing it can hear is lost, but under half the size of
+ * extractAudio's output (about 22 MB an hour instead of about 49 MB), so it takes roughly twice
+ * the running time to reach Whisper's upload limit and needs half as many pieces (audioChunks.ts).
+ */
+export function extractPlanningAudio(inputPath: string, outputPath: string): Promise<void> {
+  return runFfmpeg(
+    ffmpeg(inputPath)
+      .inputOptions(DECODE_OPTS)
+      .outputOptions(["-vn", "-ac", "1", "-ar", "16000", "-acodec", "libmp3lame", "-b:a", "48k"]),
+    outputPath
+  );
+}
+
+/**
+ * Cuts [startSeconds, startSeconds+durationSeconds) out of an audio file, copying the stream rather
+ * than re-encoding it -- used to split a long recording into pieces Whisper will accept (see
+ * audioChunks.ts). Stream copy means it can only cut at a frame edge, so a piece can be a fraction of
+ * a second out; that is far finer than the sentence boundaries clip planning works with.
+ */
+export function splitAudio(inputPath: string, startSeconds: number, durationSeconds: number, outputPath: string): Promise<void> {
+  return runFfmpeg(
+    ffmpeg(inputPath).inputOptions(["-ss", String(startSeconds), "-t", String(durationSeconds)]).outputOptions(["-c", "copy"]),
+    outputPath
+  );
+}
+
+/**
  * Extracts one JPEG frame at `atSeconds` — shared by both the crop tool's uncropped-source
  * preview and a short's own gallery thumbnail (see supabase.ts's thumbnail_key/preview_frame_key),
  * so both go through the same tested extraction rather than two separate ffmpeg invocations that

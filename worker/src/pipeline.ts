@@ -11,6 +11,7 @@ import {
   getVideoDimensions,
   cutSilences,
   extractAudio,
+  extractPlanningAudio,
   extractClipRange,
   extractFrame,
   finalizeVideo,
@@ -228,12 +229,13 @@ export async function processJob(job: ProjectRow): Promise<void> {
 
     // From here on the source is a single, clean (dead-air-trimmed) video — the AI Clip Planner
     // reasons over that ONE transcript/timeline once, rather than per-candidate, so planning
-    // stays a single Whisper + LLM call regardless of how many shorts eventually get rendered.
+    // cost depends on the source's length, never on how many shorts eventually get rendered.
     await updateJob(job.id, { status_message: "Analyzing transcript for clip-worthy moments…", progress: 50 });
     const planningAudioPath = join(tmpDir, "planning-audio.mp3");
-    await extractAudio(trimmedPath, planningAudioPath);
-    const segments = await transcribeSegments(planningAudioPath, job.caption_language);
+    await extractPlanningAudio(trimmedPath, planningAudioPath);
     const trimmedDuration = await getDuration(trimmedPath);
+    // Duration and tmpDir let this split audio too long for Whisper into pieces it accepts.
+    const segments = await transcribeSegments(planningAudioPath, job.caption_language, trimmedDuration, tmpDir);
 
     await updateJob(job.id, { status_message: "Planning clips…", progress: 55 });
     const candidates = await planClips(segments, trimmedDuration, job.clip_length);

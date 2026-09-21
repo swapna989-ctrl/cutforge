@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { env } from "./env.js";
+import { planAudioChunks } from "./audioChunks.js";
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY, maxRetries: 4, timeout: 120000 });
 
@@ -317,6 +318,9 @@ export async function transcribeCaptions(
   throw new Error(`Transcription failed after ${MAX_ATTEMPTS} attempts: ${describeError(lastError)}`);
 }
 
+// How many pieces of a long recording are sent to Whisper at once.
+const CHUNK_CONCURRENCY = 3;
+
 /**
  * Transcribes the given audio file into sentence-ish segments with real timestamps — for the
  * AI Clip Planner (see clipPlanner.ts), which needs readable, timestamped speech content to
@@ -324,8 +328,55 @@ export async function transcribeCaptions(
  * A separate Whisper call from transcribeCaptions' (word-level) one — kept independent for now so
  * neither function's behavior depends on the other; worth merging into one "word"+"segment"
  * call once both are actually used together in the same job.
+ *
+ * Works however long the recording is: Whisper refuses an upload over 25 MB, so anything bigger is
+ * split into pieces that fit and stitched back together with each piece's timestamps moved onto the
+ * full recording's clock (see audioChunks.ts). A short video is a single request, exactly as
+ * before. `durationSeconds` and `tmpDir` are only needed for that splitting.
  */
-export async function transcribeSegments(audioPath: string, language: CaptionLanguage = "auto"): Promise<TranscriptSegment[]> {
+export async function transcribeSegments(
+  audioPath: string,
+  language: CaptionLanguage = "auto",
+  durationSeconds?: number,
+  tmpDir?: string,
+  maxChunkBytes?: number
+): Promise<TranscriptSegment[]> {
+  if (durationSeconds == null || !tmpDir) return transcribeSegmentsOnce(audioPath, language);
+
+  const chunks = await planAudioChunks(audioPath, durationSeconds, tmpDir, maxChunkBytes);
+  if (chunks.length === 1) return transcribeSegmentsOnce(chunks[0].path, language);
+
+  // A few pieces at a time: an hour-long piece takes a while, and a 3-hour stream is several of them.
+  const perChunk: TranscriptSegment[][] = new Array(chunks.length);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed && next < chunks.length) {
+      const i = next++;
+      try {
+        // A piece with no speech in it (music, a break) is normal in a stream; only the whole
+        // recording having none is an error, which is checked below.
+        const segments = await transcribeSegmentsOnce(chunks[i].path, language, true);
+        console.log(`[transcribe] chunk ${i + 1}/${chunks.length} (from ${Math.round(chunks[i].offsetSeconds)}s): ${segments.length} segment(s)`);
+        perChunk[i] = segments.map((s) => ({ start: s.start + chunks[i].offsetSeconds, end: s.end + chunks[i].offsetSeconds, text: s.text }));
+      } catch (err) {
+        failed = true; // stop the other workers picking up more pieces of a job that is already lost
+        throw err;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CHUNK_CONCURRENCY, chunks.length) }, worker));
+
+  const all = perChunk.flat();
+  if (all.length === 0) throw new Error("Whisper returned no segments for any chunk of this audio");
+  return all;
+}
+
+async function transcribeSegmentsOnce(
+  audioPath: string,
+  language: CaptionLanguage = "auto",
+  allowEmpty = false
+): Promise<TranscriptSegment[]> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
 
@@ -348,6 +399,7 @@ export async function transcribeSegments(audioPath: string, language: CaptionLan
       const segments = (response as unknown as { segments?: TranscriptSegment[] }).segments ?? [];
       console.log(`Segment transcription attempt ${attempt}: got ${segments.length} segment(s)`);
       if (segments.length === 0) {
+        if (allowEmpty) return [];
         throw new Error("Whisper returned 0 segments for non-trivial audio");
       }
 

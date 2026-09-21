@@ -35,10 +35,23 @@ const CLIP_LENGTH_BOUNDS: Record<ClipLength, { min: number; max: number }> = {
   long: { min: 30, max: 60 },
 };
 
-// Not a target — there is no fixed clip count any more (see buildPrompt). This is only a sanity
-// ceiling so a pathological response, or a genuinely very eventful long source, can't blow the
-// render loop up to dozens of clips in one job.
-const MAX_CANDIDATES = 15;
+// Roughly how much video one clip should be drawn from. A 15-minute video asks for 6, a 2-hour
+// stream asks for the ceiling. Measured against the competitor a user compared us with: a
+// 128-minute video there produced 50 clips, about one per 2.5 minutes.
+const SECONDS_PER_CLIP = 150;
+
+// Never ask for fewer than this, even for a 5-minute video: a user who gets one clip back feels
+// short-changed, and the repair/overlap rules below already stop weak or duplicate picks.
+const MIN_TARGET = 3;
+
+// The ceiling on one job. Each clip is a real render (about 20-40s of worker time), and this worker
+// takes one job at a time, so an unbounded count would let a single long stream block everyone else.
+const MAX_CANDIDATES = 50;
+
+/** How many clips to ask for from a video of this length. */
+export function targetClipCount(videoDurationSeconds: number): number {
+  return Math.min(MAX_CANDIDATES, Math.max(MIN_TARGET, Math.round(videoDurationSeconds / SECONDS_PER_CLIP)));
+}
 
 function formatTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -46,55 +59,65 @@ function formatTimestamp(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function buildTranscriptText(segments: TranscriptSegment[]): string {
-  return segments.map((s) => `[${formatTimestamp(s.start)}] ${s.text.trim()}`).join("\n");
+// Every line is numbered and the model picks clips by line number, not by time. Asked for times, it
+// was measured returning nonsense: read off "[7:46]"-style markers it answered 7, 46, 58, 100 for a
+// section that began at 466 seconds, and four different picks for the first half of a video all
+// came back as 0-30, 1-22, 2-28 and 4-18 -- one clip, four times. Line numbers it handles
+// reliably, and turning them into times is then exact rather than something it estimates.
+function buildTranscriptText(lines: { index: number; segment: TranscriptSegment }[]): string {
+  return lines.map(({ index, segment }) => `[${index}] (${formatTimestamp(segment.start)}) ${segment.text.trim()}`).join("\n");
 }
 
-function buildPrompt(segments: TranscriptSegment[], videoDurationSeconds: number, bounds: { min: number; max: number }): string {
-  return `You are an expert short-form video editor. Below is a timestamped transcript of a ${Math.round(
-    videoDurationSeconds
-  )}-second video. Find every genuinely strong, standalone moment worth turning into a short vertical clip (each ${bounds.min}-${bounds.max} seconds long) for TikTok, Instagram Reels, and YouTube Shorts.
+type PlanWindow = { start: number; end: number };
 
-There is no fixed number to hit — match the count to what this specific video actually contains. A short or low-event video might genuinely only have 1-2 moments that hold up on their own; a long, eventful one might have 8-10 or more. Never pad the count with a weak, repetitive, or overlapping clip just to reach a higher number, and never leave out a genuinely strong moment just to keep the count low. Every clip must be at least ${bounds.min} seconds long — never shorter, even if that means finding fewer moments overall.
+function buildPrompt(
+  lines: { index: number; segment: TranscriptSegment }[],
+  videoDurationSeconds: number,
+  bounds: { min: number; max: number },
+  ask: number,
+  window: PlanWindow | null
+): string {
+  const scope = window
+    ? `the section from ${formatTimestamp(window.start)} to ${formatTimestamp(window.end)} of a ${Math.round(videoDurationSeconds)}-second video`
+    : `a ${Math.round(videoDurationSeconds)}-second video`;
+  const spread = window ? "the whole section" : "the whole running time";
+  return `You are an expert short-form video editor. Below is the transcript of ${scope}, one numbered line per spoken sentence, each with its time in minutes:seconds. Find the ${ask} strongest standalone moments worth turning into short vertical clips (each ${bounds.min}-${bounds.max} seconds long) for TikTok, Instagram Reels, and YouTube Shorts.
 
-Pick moments that are surprising, funny, emotionally resonant, controversial, or contain a clear self-contained story or insight. Each clip must start and end at a natural sentence boundary — never mid-sentence or mid-thought. startTime and endTime must be real seconds that fall within the transcript's own time range below.
+Return ${ask} clips if this ${window ? "section" : "video"} genuinely contains that many moments that hold up on their own. Return fewer only if it truly does not — but look hard first: there is almost always more than a handful. Spread your picks across ${spread} rather than clustering them near the start, and never return two clips that share any line.
+
+Pick moments that are surprising, funny, emotionally resonant, controversial, or contain a clear self-contained story or insight. A clip is a run of consecutive lines, so it always starts and ends on a whole sentence. Use the times in brackets to choose a run that lasts between ${bounds.min} and ${bounds.max} seconds.
 
 For each candidate return:
-- "startTime": number (seconds)
-- "endTime": number (seconds)
+- "startLine": integer — the number of the first line of the clip, exactly as printed in the square brackets
+- "endLine": integer — the number of the last line of the clip (the same as startLine only if that one line is long enough)
 - "hook": a punchy, curiosity-driving opening line under 12 words, written as if spoken by the creator — not a generic summary
 - "caption": a short 1-2 sentence social caption for the post itself, no hashtags
 - "viralScore": an integer 0-100 estimating how likely this specific clip is to perform well as a short-form video — weigh hook strength, emotional impact or surprise, and how well it stands alone without the rest of the video. Use the full range; do not default everything to the same number.
 
 Respond with ONLY valid JSON of this exact shape, nothing else:
-{"clips": [{"startTime": number, "endTime": number, "hook": string, "caption": string, "viralScore": number}]}
+{"clips": [{"startLine": integer, "endLine": integer, "hook": string, "caption": string, "viralScore": number}]}
 
 Transcript:
-${buildTranscriptText(segments)}`;
+${buildTranscriptText(lines)}`;
 }
 
-type RawCandidate = { startTime: number; endTime: number; hook: string; caption: string; viralScore: number };
+type RawCandidate = { startLine: number; endLine: number; hook: string; caption: string; viralScore: number };
 
-/** Type/shape validation only — NOT duration bounds, which must be checked after snapToBoundary
- *  below moves startTime/endTime, not before. */
+/** Type/shape validation only — whether the lines exist and the clip's length come after this. */
 function isWellFormed(c: unknown): c is RawCandidate {
   if (typeof c !== "object" || c === null) return false;
-  const { startTime, endTime, hook, caption, viralScore } = c as Record<string, unknown>;
-  if (typeof startTime !== "number" || typeof endTime !== "number" || !Number.isFinite(startTime) || !Number.isFinite(endTime)) {
-    return false;
-  }
+  const { startLine, endLine, hook, caption, viralScore } = c as Record<string, unknown>;
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) return false;
   if (typeof hook !== "string" || !hook.trim() || typeof caption !== "string" || !caption.trim()) return false;
   if (typeof viralScore !== "number" || !Number.isFinite(viralScore) || viralScore < 0 || viralScore > 100) return false;
   return true;
 }
 
 /**
- * Snaps a raw LLM-chosen timestamp onto the nearest real transcript segment edge. The model's
- * startTime/endTime are just numbers it read off the prompt's own [MM:SS] markers and picked —
- * nothing forces them to land exactly where Whisper actually detected a sentence/utterance
- * boundary, and a real observed clip ending mid-word at an arbitrary-feeling point is exactly
- * what "ask nicely in the prompt" alone doesn't prevent. `segments` (from transcribeSegments) are
- * real detected speech boundaries; snapping onto one is what actually guarantees a clean edge.
+ * Snaps a time onto the nearest real transcript segment edge. `segments` (from transcribeSegments)
+ * are the speech boundaries Whisper actually detected, and landing on one is what guarantees a clean
+ * cut rather than one that ends mid-word. The clips the model picks already start and end on whole
+ * lines, so this mostly matters to fitToBounds when it grows or trims a clip to fit the length window.
  */
 function snapToBoundary(time: number, segments: TranscriptSegment[], edge: "start" | "end"): number {
   if (segments.length === 0) return time;
@@ -111,32 +134,103 @@ function snapToBoundary(time: number, segments: TranscriptSegment[], edge: "star
 }
 
 /**
- * Turns a timestamped transcript into candidate short-clip moments via an LLM — real timestamps
- * (snapped onto real transcript boundaries, see snapToBoundary), a hook line, and a caption per
- * candidate. The count adapts to what the video actually supports (see buildPrompt) rather than
- * targeting a fixed number — MAX_CANDIDATES is a safety ceiling, not a target, and every
- * candidate must still fall within `clipLength`'s bounds (see CLIP_LENGTH_BOUNDS) regardless of
- * the source's own length. This only plans WHAT to clip; it doesn't render anything (mirrors the
- * existing transcribeCaptions/finalizeVideo split: get real data, then act on it as a separate
- * step).
+ * Pulls a candidate's edges onto real sentence boundaries and, if the result is a little too short or
+ * too long, repairs it rather than throwing it away. Discarding was why a 15-minute video could come
+ * back with two clips (or none): snapping routinely moves an edge a few seconds, and almost half of
+ * every model response was being dropped for landing just outside the window. A clip that cannot be
+ * repaired at all (nothing to grow into, or no boundary inside the window) is still dropped.
  */
-export async function planClips(
+export function fitToBounds(
+  startTime: number,
+  endTime: number,
   segments: TranscriptSegment[],
+  bounds: { min: number; max: number }
+): { startTime: number; endTime: number } | null {
+  const start = snapToBoundary(startTime, segments, "start");
+  let end = snapToBoundary(endTime, segments, "end");
+  if (end <= start) return null;
+
+  // Too short: keep taking the next sentence until it is long enough.
+  if (end - start < bounds.min) {
+    for (const s of segments) {
+      if (s.end > end) {
+        end = s.end;
+        if (end - start >= bounds.min) break;
+      }
+    }
+  }
+
+  // Too long: fall back to the last sentence end that still fits.
+  if (end - start > bounds.max) {
+    const fits = segments.map((s) => s.end).filter((e) => e > start && e - start >= bounds.min && e - start <= bounds.max);
+    if (fits.length === 0) return null;
+    end = fits[fits.length - 1];
+  }
+
+  const duration = end - start;
+  return duration >= bounds.min && duration <= bounds.max ? { startTime: start, endTime: end } : null;
+}
+
+/**
+ * Keeps the strongest clip out of any group that overlaps in time. Without this a video could come
+ * back with two clips covering nearly the same moment (a real result: 0-64s and 48-87s), which reads
+ * as padding. A couple of seconds of shared edge is allowed, since snapping can butt two clips
+ * together on the same boundary.
+ */
+export function dropOverlaps(candidates: ClipCandidate[]): ClipCandidate[] {
+  const TOLERANCE = 2;
+  const kept: ClipCandidate[] = [];
+  for (const c of [...candidates].sort((a, b) => b.viralScore - a.viralScore)) {
+    if (kept.some((k) => c.startTime < k.endTime - TOLERANCE && c.endTime > k.startTime + TOLERANCE)) continue;
+    kept.push(c);
+  }
+  return kept;
+}
+
+// A long video is planned a section at a time. One request over a 2-hour transcript is tens of
+// thousands of words: the model skims it, favours the opening, and can't be asked for dozens of
+// picks at once. Sections keep each request small enough for it to read properly, spread the picks
+// across the whole video by construction, and let a stream be planned in parallel.
+const SINGLE_PASS_MAX_SECONDS = 15 * 60;
+const WINDOW_SECONDS = 10 * 60;
+const WINDOW_CONCURRENCY = 3;
+
+/** The sections a video is planned in: the whole video when short, otherwise equal ~10-minute parts. */
+export function planWindows(durationSeconds: number): PlanWindow[] {
+  if (durationSeconds <= SINGLE_PASS_MAX_SECONDS) return [{ start: 0, end: durationSeconds }];
+  const count = Math.ceil(durationSeconds / WINDOW_SECONDS);
+  const length = durationSeconds / count;
+  return Array.from({ length: count }, (_, i) => ({ start: i * length, end: (i + 1) * length }));
+}
+
+/**
+ * Asks the model about one section and returns its clips, already snapped onto real sentence
+ * boundaries and repaired. Boundaries are snapped against the WHOLE transcript, not just this
+ * section, so a clip that begins near the end of a section can finish naturally in the next one.
+ */
+async function planWindow(
+  allSegments: TranscriptSegment[],
+  window: PlanWindow | null,
   videoDurationSeconds: number,
-  clipLength: ClipLength
+  bounds: { min: number; max: number },
+  ask: number
 ): Promise<ClipCandidate[]> {
-  if (segments.length === 0) throw new Error("Cannot plan clips from an empty transcript");
-  const bounds = CLIP_LENGTH_BOUNDS[clipLength];
+  const lines = allSegments
+    .map((segment, index) => ({ index, segment }))
+    .filter(({ segment }) => !window || (segment.start >= window.start && segment.start < window.end));
+  if (lines.length === 0) return []; // a stretch with no speech has nothing to plan from
 
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
-
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const response = await openai.chat.completions.create({
         model: MODEL,
         response_format: { type: "json_object" },
-        messages: [{ role: "user", content: buildPrompt(segments, videoDurationSeconds, bounds) }],
+        // Lower than the default so the same video gives a similar answer each time; the picks were
+        // varying by a factor of two between identical runs.
+        temperature: 0.4,
+        messages: [{ role: "user", content: buildPrompt(lines, videoDurationSeconds, bounds, ask, window) }],
       });
 
       const raw = response.choices[0]?.message?.content;
@@ -146,51 +240,96 @@ export async function planClips(
       const clipsRaw = (parsed as { clips?: unknown[] }).clips;
       if (!Array.isArray(clipsRaw)) throw new Error("Response JSON has no clips array");
 
-      // Snapping happens BEFORE the duration check, not after — a candidate the model picked at
-      // a valid length can end up shorter or longer once its edges move onto real segment
-      // boundaries, and it's the post-snap length that will actually get rendered.
-      const snapped = clipsRaw.filter(isWellFormed).map((c) => ({
-        ...c,
-        startTime: snapToBoundary(c.startTime, segments, "start"),
-        endTime: snapToBoundary(c.endTime, segments, "end"),
-      }));
-
-      const seen = new Set<string>();
-      const validCandidates: ClipCandidate[] = [];
-      for (const c of snapped) {
-        if (c.startTime < 0 || c.endTime > videoDurationSeconds || c.endTime <= c.startTime) continue;
-        const duration = c.endTime - c.startTime;
-        if (duration < bounds.min || duration > bounds.max) continue;
-        // Two distinct raw candidates can snap onto the same pair of real boundaries — keep the
-        // first (already the model's own preferred ordering) rather than rendering a duplicate.
-        const key = `${c.startTime.toFixed(2)}-${c.endTime.toFixed(2)}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        validCandidates.push({ ...c, viralScore: Math.round(c.viralScore) });
+      // A clip is a run of whole lines, so its edges are real sentence boundaries by construction;
+      // fitToBounds then repairs one that came out a little too short or too long (the post-repair
+      // length is what actually gets rendered). A line number that doesn't exist is dropped.
+      const fitted: ClipCandidate[] = [];
+      for (const c of clipsRaw.filter(isWellFormed)) {
+        const first = allSegments[c.startLine];
+        const last = allSegments[c.endLine];
+        if (!first || !last) continue;
+        const fit = fitToBounds(first.start, last.end, allSegments, bounds);
+        if (!fit) continue;
+        if (fit.startTime < 0 || fit.endTime > videoDurationSeconds) continue;
+        fitted.push({ startTime: fit.startTime, endTime: fit.endTime, hook: c.hook, caption: c.caption, viralScore: Math.round(c.viralScore) });
       }
 
       console.log(
-        `Clip planning attempt ${attempt}: ${clipsRaw.length} candidate(s) returned, ${validCandidates.length} valid after snapping to real transcript boundaries`
+        `Clip planning${window ? ` [${formatTimestamp(window.start)}-${formatTimestamp(window.end)}]` : ""} attempt ${attempt}: asked for ${ask}, model returned ${clipsRaw.length}, ${fitted.length} usable after snapping/repair`
       );
-      if (validCandidates.length === 0) {
-        throw new Error(`Model returned ${clipsRaw.length} candidate(s) but none passed validation`);
-      }
-
-      // Keep the MAX_CANDIDATES highest-scoring candidates (not just the first N — see
-      // MAX_CANDIDATES' own comment, this is a safety ceiling, not a target), then present them
-      // back in chronological order — position in the DB should reflect where a clip falls in
-      // the source video, but which ones survive the ceiling should be a quality decision, not
-      // an artifact of whatever order the model happened to list them in.
-      return validCandidates
-        .sort((a, b) => b.viralScore - a.viralScore)
-        .slice(0, MAX_CANDIDATES)
-        .sort((a, b) => a.startTime - b.startTime);
+      // An answer with nothing usable in it is retried like any other failed attempt.
+      if (fitted.length === 0) throw new Error(`Model returned ${clipsRaw.length} candidate(s) but none could be fitted to a real clip`);
+      return fitted;
     } catch (err) {
       lastError = err;
       console.error(`Clip planning attempt ${attempt}/${MAX_ATTEMPTS} failed:`, describeError(err));
       if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, attempt * 3000));
     }
   }
-
   throw new Error(`Clip planning failed after ${MAX_ATTEMPTS} attempts: ${describeError(lastError)}`);
+}
+
+/**
+ * Turns a timestamped transcript into candidate short-clip moments via an LLM — real timestamps
+ * (snapped onto real transcript boundaries, see snapToBoundary), a hook line, and a caption per
+ * candidate. The model is asked for a real target count scaled to the video's length (see
+ * targetClipCount); a long video is planned a section at a time (see planWindows); every candidate is
+ * repaired if snapping leaves it slightly outside `clipLength`'s bounds (see fitToBounds); and clips
+ * covering the same moment are reduced to the strongest one (see dropOverlaps). This only plans WHAT
+ * to clip; it doesn't render anything (mirrors the existing transcribeCaptions/finalizeVideo split:
+ * get real data, then act on it as a separate step).
+ */
+export async function planClips(
+  segments: TranscriptSegment[],
+  videoDurationSeconds: number,
+  clipLength: ClipLength
+): Promise<ClipCandidate[]> {
+  if (segments.length === 0) throw new Error("Cannot plan clips from an empty transcript");
+  const bounds = CLIP_LENGTH_BOUNDS[clipLength];
+  const target = targetClipCount(videoDurationSeconds);
+  const windows = planWindows(videoDurationSeconds);
+
+  let results: ClipCandidate[][];
+  if (windows.length === 1) {
+    results = [await planWindow(segments, null, videoDurationSeconds, bounds, target)];
+  } else {
+    // Each section is asked for its share of the target, with some slack: overlaps and weak picks
+    // are trimmed afterwards, and a section with nothing good simply returns fewer.
+    results = new Array(windows.length);
+    let failed = 0;
+    let next = 0;
+    const worker = async () => {
+      while (next < windows.length) {
+        const i = next++;
+        const w = windows[i];
+        const ask = Math.max(2, Math.ceil(((target * (w.end - w.start)) / videoDurationSeconds) * 1.2));
+        try {
+          results[i] = await planWindow(segments, w, videoDurationSeconds, bounds, ask);
+        } catch (err) {
+          // One bad section must not throw away the rest of a long stream's clips.
+          failed++;
+          results[i] = [];
+          console.error(`Clip planning gave up on section ${i + 1}/${windows.length}:`, describeError(err));
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(WINDOW_CONCURRENCY, windows.length) }, worker));
+    if (failed === windows.length) throw new Error("Clip planning failed for every section of this video");
+  }
+
+  const seen = new Set<string>();
+  const unique = results.flat().filter((c) => {
+    const key = `${c.startTime.toFixed(2)}-${c.endTime.toFixed(2)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const validCandidates = dropOverlaps(unique).slice(0, MAX_CANDIDATES);
+  console.log(`Clip planning: asked for ${target}, ${unique.length} usable across ${windows.length} section(s), ${validCandidates.length} kept after dropping overlaps`);
+  if (validCandidates.length === 0) throw new Error("Model returned candidates but none could be fitted to a real clip");
+
+  // Presented in chronological order: position in the DB should reflect where a clip falls in the
+  // source video, while which ones survive stays a quality decision (dropOverlaps and the ceiling
+  // both work highest-score-first).
+  return validCandidates.sort((a, b) => a.startTime - b.startTime);
 }
