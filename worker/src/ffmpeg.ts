@@ -230,8 +230,9 @@ export function extractClipRange(inputPath: string, startSeconds: number, endSec
   );
 }
 
-/** Where footage is read from: a local file, or a stream address the site wants certain headers on. */
-export type FootageInput = { source: string; headers?: Record<string, string> };
+/** Where footage is read from: a file on this machine, or an address served by this machine's own
+ *  stream relay (see streamRelay.ts) -- never a video site's address directly. */
+export type FootageInput = { source: string };
 
 // A slow or stalled stream must fail the one clip rather than hold the worker forever.
 const CUT_TIMEOUT_MS = 6 * 60 * 1000;
@@ -242,33 +243,16 @@ const CUT_TIMEOUT_MS = 6 * 60 * 1000;
  * for a clip, so a moment from the middle of a 2-hour video costs the time and traffic of that moment
  * alone (ffmpeg seeks straight to it) -- the whole video is never downloaded or re-encoded.
  *
- * `inputs` is one combined stream or a video stream followed by an audio stream. Stream addresses
- * (http/https) are read over the network, with the headers the site expects and through `proxy` when
- * given; anything else is a local file.
+ * `inputs` is one combined stream or a video stream followed by an audio stream. A video site's stream
+ * is never opened by ffmpeg itself: the worker fetches it and offers it to ffmpeg as plain HTTP on
+ * localhost (streamRelay.ts), so ffmpeg needs no HTTPS, certificates, DNS, headers or proxy of its own.
  *
- * Nothing that could identify an address, header, or the proxy's login is put in a thrown error: it
- * ends up in logs, and the addresses are short-lived credentials while the proxy URL holds a password.
+ * Addresses other than this machine's own are scrubbed from any thrown error: it ends up in logs, and a
+ * site's stream address is a short-lived credential.
  */
-export function cutWorkingCopy(
-  inputs: FootageInput[],
-  startSeconds: number,
-  durationSeconds: number,
-  outputPath: string,
-  maxLongEdge: number,
-  proxy: string | null = null
-): Promise<void> {
+export function cutWorkingCopy(inputs: FootageInput[], startSeconds: number, durationSeconds: number, outputPath: string, maxLongEdge: number): Promise<void> {
   const args = ["-y", "-hide_banner", "-loglevel", "error", "-nostdin"];
-  for (const input of inputs) {
-    if (/^https?:\/\//i.test(input.source)) {
-      if (proxy) args.push("-http_proxy", proxy);
-      const headers = Object.entries(input.headers ?? {});
-      if (headers.length > 0) args.push("-headers", headers.map(([k, v]) => `${k}: ${v}`).join("\r\n") + "\r\n");
-      // A long read over the internet can be dropped part-way; picking it back up is far cheaper than
-      // failing the clip.
-      args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
-    }
-    args.push(...DECODE_OPTS, "-ss", String(startSeconds), "-i", input.source);
-  }
+  for (const input of inputs) args.push(...DECODE_OPTS, "-ss", String(startSeconds), "-i", input.source);
   if (inputs.length === 2) args.push("-map", "0:v:0", "-map", "1:a:0");
   else args.push("-map", "0:v:0", "-map", "0:a:0?");
   args.push(
@@ -286,7 +270,7 @@ export function cutWorkingCopy(
     outputPath
   );
 
-  const safe = args.map((a, i) => (args[i - 1] === "-http_proxy" || args[i - 1] === "-headers" || /^https?:\/\//i.test(a) ? "<redacted>" : a));
+  const scrub = (text: string) => text.replace(/https?:\/\/(?!127\.0\.0\.1[:/])\S+/g, "<redacted>");
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath as string, args, { timeout: CUT_TIMEOUT_MS, killSignal: "SIGKILL" });
     const stderrTail: string[] = [];
@@ -301,10 +285,7 @@ export function cutWorkingCopy(
     proc.on("close", (code, signal) => {
       if (code === 0) return resolve();
       const why = signal ? `killed by ${signal} (timed out after ${CUT_TIMEOUT_MS / 1000}s?)` : `exited with code ${code}`;
-      // The stderr tail can quote an address (ffmpeg names the URL it failed to open), so it is
-      // scrubbed the same way as the command line.
-      const scrubbed = stderrTail.join("\n").replace(/https?:\/\/\S+/g, "<redacted>");
-      reject(new Error(`ffmpeg ${why}\ncmd: ${safe.join(" ")}\nstderr tail:\n${scrubbed}`));
+      reject(new Error(`ffmpeg ${why}\ncmd: ${scrub(args.join(" "))}\nstderr tail:\n${scrub(stderrTail.join("\n"))}`));
     });
   });
 }

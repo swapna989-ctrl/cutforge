@@ -2,7 +2,9 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir, cpus, totalmem, freemem } from "node:os";
 import { join } from "node:path";
 import { downloadToFile, uploadFromFile } from "./r2.js";
-import { downloadAudioFromUrl, fetchVideoInfo, resolveStreams, type VideoInfo } from "./ytdlp.js";
+import { downloadAudioFromUrl, fetchVideoInfo, resolveStreams, isYouTube, type VideoInfo } from "./ytdlp.js";
+import { registerStream, type RegisteredStream } from "./streamRelay.js";
+import { env } from "./env.js";
 import { parseVideoUrl, PLATFORM_LABEL } from "./videoUrl.js";
 import {
   getDuration,
@@ -14,7 +16,6 @@ import {
   concatClips,
   STANDARD_LONG_EDGE,
   HD_LONG_EDGE,
-  type FootageInput,
 } from "./ffmpeg.js";
 import { wantsHdWorkingCopy, linkedDownloadMaxHeight } from "./quality.js";
 import { creditsForSeconds } from "./credits.js";
@@ -27,7 +28,7 @@ import { toUserMessage, UserFacingError, DownloadBlockedError } from "./errors.j
 import { scheduleBlockedRetry, clearBlockedRetry } from "./blockedRetry.js";
 
 /** Bumped by hand so a deployed failure proves which code Railway is actually running. */
-export const WORKER_BUILD = "2026-09-22-transcript-first";
+export const WORKER_BUILD = "2026-09-22-stream-relay";
 
 const MB = 1024 * 1024;
 
@@ -96,44 +97,88 @@ async function checkLinkedVideo(job: ProjectRow, info: VideoInfo): Promise<void>
   }
 }
 
-/** Where each short's picture is cut from: a file on this machine, or a video site's stream. */
-type Footage = {
-  inputs: FootageInput[];
-  /** The long-edge cap for the working copy of each moment (see quality.ts). */
-  longEdge: number;
-  /** The proxy the stream must be read through, if any (see resolveStreams). */
-  proxy: string | null;
-};
+/** Where each short's picture is cut from: a file on this machine, or a video site's stream, read
+ *  through this worker's own relay (see streamRelay.ts) rather than by ffmpeg directly. `refresh`
+ *  (link jobs only) asks the site for a brand new set of stream addresses and swaps them in --
+ *  a resolved address is occasionally bad in a way retrying the SAME address can't fix (observed on a
+ *  real job: ffmpeg exited 0 with a 262-byte, silent-audio file for one clip while five others from
+ *  the same video cut correctly; re-running the same clip moments later worked with no code change).
+ *  Mutates `streams` in place so every clip already in flight against this footage picks up the fresh
+ *  addresses on its own next read, without needing to know a refresh happened. */
+export type Footage =
+  | { source: "local"; path: string; longEdge: number }
+  | { source: "relay"; streams: RegisteredStream[]; longEdge: number; refresh: () => Promise<void> };
+
+function footageInputs(footage: Footage): { source: string }[] {
+  return footage.source === "local" ? [{ source: footage.path }] : footage.streams.map((s) => ({ source: s.url }));
+}
+
+/** ffmpeg's own wording when the relay answers a request with a plain refusal (see streamRelay.ts's
+ *  403 passthrough). Used only to give the pre-charge probe a clearer message -- it does not change
+ *  whether a per-clip failure is retried, see cutMoment. */
+function isRefused(err: unknown): boolean {
+  return err instanceof Error && /403 Forbidden/i.test(err.message);
+}
 
 /**
- * Cuts one moment out of the footage. A stream can drop or refuse a read for reasons that pass on
- * their own, so it gets a second try; what a second failure means is the same for every short, so it
- * is reported once, in words a user can act on.
+ * Cuts one moment out of the footage. The relay already retries a transient failure on its own
+ * (streamRelay.ts), so a failure that reaches here is either a real refusal or a resolved address that
+ * behaves badly in a way retrying it again won't fix -- for a link, the retry asks the site for fresh
+ * addresses first (see Footage.refresh) rather than hammering the one that just failed.
  */
-async function cutMoment(footage: Footage, startSeconds: number, endSeconds: number, outputPath: string): Promise<void> {
-  const isStream = footage.inputs.some((i) => /^https?:\/\//i.test(i.source));
-  const attempts = isStream ? 2 : 1;
+export async function cutMoment(footage: Footage, startSeconds: number, endSeconds: number, outputPath: string): Promise<void> {
+  const attempts = footage.source === "relay" ? 2 : 1;
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      await cutWorkingCopy(footage.inputs, startSeconds, endSeconds - startSeconds, outputPath, footage.longEdge, footage.proxy);
+      await cutWorkingCopy(footageInputs(footage), startSeconds, endSeconds - startSeconds, outputPath, footage.longEdge);
       const { size } = await stat(outputPath);
       if (size < 10_000) throw new Error(`Cut clip is suspiciously small (${size} bytes)`);
       return;
     } catch (err) {
       lastError = err;
       console.error(`Cutting ${startSeconds.toFixed(1)}-${endSeconds.toFixed(1)}s failed (attempt ${attempt}/${attempts}):`, err);
-      if (attempt < attempts) await new Promise((r) => setTimeout(r, 3000));
+      if (attempt >= attempts) break;
+      if (footage.source === "relay") {
+        try {
+          await footage.refresh();
+        } catch (refreshErr) {
+          console.error("Refreshing the stream before retry failed -- giving up on this clip:", refreshErr);
+          break; // the addresses that just failed are the only ones left; retrying them again won't help
+        }
+      }
+      await new Promise((r) => setTimeout(r, 2000));
     }
   }
-  if (isStream) {
+  if (footage.source === "relay") {
     throw new UserFacingError("We couldn't fetch this part of the video from the video site. Paste the link again to retry, or upload the file instead.");
   }
   throw lastError;
 }
 
+/**
+ * Tries a video-site request directly first, and only through the configured proxy if the direct
+ * attempt was blocked (YouTube's bot check, a rate limit) -- a proxy is billed per gigabyte, so it is
+ * the fallback, not the default. Twitch is never retried through it: it already works from a
+ * datacenter, and the proxy is priced and provisioned for YouTube's traffic alone.
+ */
+export async function withProxyFallback<T>(url: string, attempt: (viaProxy: boolean) => Promise<T>): Promise<{ value: T; viaProxy: boolean }> {
+  try {
+    return { value: await attempt(false), viaProxy: false };
+  } catch (err) {
+    if (err instanceof DownloadBlockedError && env.YTDLP_PROXY && isYouTube(url)) {
+      console.log("[pipeline] direct request was blocked -- retrying through the configured proxy");
+      return { value: await attempt(true), viaProxy: true };
+    }
+    throw err;
+  }
+}
+
 export async function processJob(job: ProjectRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-"));
+  // Any stream registered with the relay (link jobs only) -- released in the outer `finally` however
+  // the job ends, so a failed job doesn't leak a registration for the life of the worker process.
+  const registeredStreams: RegisteredStream[] = [];
 
   try {
     const clips = await getProjectClips(job.id);
@@ -175,7 +220,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
       await concatClips(clipPaths, combinedPath, tmpDir);
       duration = await getDuration(combinedPath);
       planningInput = combinedPath;
-      footage = { inputs: [{ source: combinedPath }], longEdge: STANDARD_LONG_EDGE, proxy: null };
+      footage = { source: "local", path: combinedPath, longEdge: STANDARD_LONG_EDGE };
     } else if (job.source_url && !job.source_key) {
       // Link-based project. Only the SOUND is downloaded up front: that is all it takes to transcribe
       // the video and choose its clips, and it is a tenth of the traffic of the picture. Each chosen
@@ -199,29 +244,71 @@ export async function processJob(job: ProjectRow): Promise<void> {
       const audioPath = join(tmpDir, "source-audio");
       let lastReportedPercent = 0;
       let lastReportedAt = 0;
-      await downloadAudioFromUrl(link.url, audioPath, (percent) => {
-        const now = Date.now();
-        // Progress arrives many times a second; the database only needs a heartbeat.
-        if ((percent - lastReportedPercent < 5 && percent < 100) || now - lastReportedAt < 4000) return;
-        lastReportedPercent = percent;
-        lastReportedAt = now;
-        updateJob(job.id, { status_message: `Downloading the audio from ${platform}… ${percent}%`, progress: 5 + Math.floor(percent * 0.07) }).catch(() => {});
-      });
+      await withProxyFallback(link.url, (viaProxy) =>
+        downloadAudioFromUrl(
+          link.url,
+          audioPath,
+          (percent) => {
+            const now = Date.now();
+            // Progress arrives many times a second; the database only needs a heartbeat.
+            if ((percent - lastReportedPercent < 5 && percent < 100) || now - lastReportedAt < 4000) return;
+            lastReportedPercent = percent;
+            lastReportedAt = now;
+            updateJob(job.id, { status_message: `Downloading the audio from ${platform}… ${percent}%`, progress: 5 + Math.floor(percent * 0.07) }).catch(() => {});
+          },
+          viaProxy
+        )
+      );
 
       // Looked up now, before any paid step, so a site that refuses it is retried (see the catch
-      // below) while nothing has been spent -- and so the picture size is known.
+      // below) while nothing has been spent -- and so the picture size is known. A YouTube link asked
+      // for through the proxy gets a smaller picture (see linkedDownloadMaxHeight): the audio download
+      // above already proved the video watchable, so the proxy going ahead at all only ever costs a
+      // gigabyte-billed video stream, never a wasted whole job.
       await updateJob(job.id, { status_message: `Preparing the ${platform} video…`, progress: 13 });
-      const streams = await resolveStreams(link.url, linkedDownloadMaxHeight(job.ratio));
+      const maxHeight = linkedDownloadMaxHeight(job.ratio);
+      const { value: streams, viaProxy } = await withProxyFallback(link.url, (viaProxy) => resolveStreams(link.url, maxHeight, viaProxy));
       const hd = wantsHdWorkingCopy(job.ratio, streams.width > 0 && streams.height > 0 ? streams : undefined);
-      console.log(`[quality] job ${job.id}: stream ${streams.width}x${streams.height}, ratio ${job.ratio} -> working copy capped at ${hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE}px`);
+      const longEdge = hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE;
+      console.log(`[quality] job ${job.id}: stream ${streams.width}x${streams.height}, ratio ${job.ratio}, proxy ${viaProxy} -> working copy capped at ${longEdge}px`);
+
+      // Addresses are bound to the IP that asked for them (YouTube), so bytes fetched for them must
+      // go the same way (direct or through the same proxy) as the request that produced them.
+      const proxy = viaProxy && env.YTDLP_PROXY ? env.YTDLP_PROXY : null;
+      const relayStreams = await Promise.all(streams.inputs.map((s) => registerStream({ url: s.url, headers: s.headers, proxy, hls: s.hls })));
+      registeredStreams.push(...relayStreams);
+      const linkedFootage: Extract<Footage, { source: "relay" }> = {
+        source: "relay",
+        streams: relayStreams,
+        longEdge,
+        refresh: async () => {
+          console.log(`[pipeline] job ${job.id}: re-resolving ${platform} stream addresses for a retry`);
+          const fresh = await resolveStreams(link.url, maxHeight, viaProxy);
+          const freshStreams = await Promise.all(fresh.inputs.map((s) => registerStream({ url: s.url, headers: s.headers, proxy, hls: s.hls })));
+          registeredStreams.push(...freshStreams);
+          // The old registrations are left in `registeredStreams` too and released with everything
+          // else in the outer `finally` -- another clip could still be mid-cut against them right now.
+          linkedFootage.streams = freshStreams;
+        },
+      };
 
       duration = await getDuration(audioPath);
+
+      // A quick real read BEFORE any credit is charged: resolveStreams only asks the site to describe
+      // its formats, which can succeed even when the actual bytes are refused (an address that expired
+      // between the two requests, a block that only shows up on the real fetch). Whatever this costs
+      // in traffic is refunded by catching a charge for a video that could never actually be rendered.
+      const probePath = join(tmpDir, "probe.mp4");
+      try {
+        await cutWorkingCopy(footageInputs(linkedFootage), 0, Math.min(2, duration), probePath, 320);
+      } catch (err) {
+        console.error(`[pipeline] job ${job.id}: pre-charge probe of the ${platform} stream failed:`, err);
+        if (isRefused(err)) throw new DownloadBlockedError(`${platform} refused this video's stream. Paste the link again to retry, or upload the file instead.`);
+        throw new UserFacingError(`We couldn't read this video from ${platform}. Paste the link again to retry, or upload the file instead.`);
+      }
+
       planningInput = audioPath;
-      footage = {
-        inputs: streams.inputs.map((s) => ({ source: s.url, headers: s.headers })),
-        longEdge: hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE,
-        proxy: streams.proxy,
-      };
+      footage = linkedFootage;
     } else {
       if (!job.source_key) throw new Error("Job has no source_key and no source_url");
       const sourcePath = join(tmpDir, "source.mp4");
@@ -239,7 +326,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
       );
       duration = sourceDuration;
       planningInput = sourcePath;
-      footage = { inputs: [{ source: sourcePath }], longEdge: hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE, proxy: null };
+      footage = { source: "local", path: sourcePath, longEdge: hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE };
     }
 
     if (duration < MIN_VIDEO_SECONDS) {
@@ -346,6 +433,10 @@ export async function processJob(job: ProjectRow): Promise<void> {
       progress: 100,
       status_message: `${readyCount} of ${shorts.length} shorts ready.`,
     });
+    if (registeredStreams.length > 0) {
+      const bytes = registeredStreams.reduce((sum, s) => sum + s.bytesFetched(), 0);
+      console.log(`[render] job ${job.id}: fetched ${(bytes / 1e6).toFixed(1)} MB from the video site's stream across ${shorts.length} clip(s)`);
+    }
     clearBlockedRetry(job.id);
   } catch (err) {
     // The video site refused our servers (YouTube's bot check, a rate limit). That often passes by
@@ -383,6 +474,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
       error_message: toUserMessage(err),
     }).catch((updateErr) => console.error("Also failed to record the failure:", updateErr));
   } finally {
+    for (const s of registeredStreams) s.dispose();
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }

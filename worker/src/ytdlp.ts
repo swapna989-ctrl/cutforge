@@ -62,7 +62,7 @@ function formatArgs(maxHeight: number): string[] {
 const DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
 const INFO_TIMEOUT_MS = 90 * 1000;
 
-function isYouTube(url: string): boolean {
+export function isYouTube(url: string): boolean {
   try {
     const host = new URL(url).hostname;
     return host === "youtube.com" || host.endsWith(".youtube.com");
@@ -71,8 +71,14 @@ function isYouTube(url: string): boolean {
   }
 }
 
+/** The proxy this call should go through: only when asked to (`viaProxy`) and only for YouTube --
+ *  Twitch works from a datacenter, and a proxy bills per gigabyte. */
+export function proxyFor(url: string, viaProxy: boolean): string | null {
+  return viaProxy && env.YTDLP_PROXY && isYouTube(url) ? env.YTDLP_PROXY : null;
+}
+
 /** Flags every yt-dlp call shares. */
-async function commonArgs(url: string): Promise<string[]> {
+async function commonArgs(url: string, viaProxy: boolean): Promise<string[]> {
   const cookiesPath = await resolveCookiesFilePath();
   // Real diagnostic, not a guess — every past failure required inferring whether cookies were
   // even in play from indirect evidence (which error message came back). This says so directly.
@@ -97,12 +103,13 @@ async function commonArgs(url: string): Promise<string[]> {
   // a home IP hasn't needed it.
   if (cookiesPath) args.push("--cookies", cookiesPath);
 
-  if (env.YTDLP_PROXY && isYouTube(url)) {
-    args.push("--proxy", env.YTDLP_PROXY);
+  const proxy = proxyFor(url, viaProxy);
+  if (proxy) {
+    args.push("--proxy", proxy);
     // Host and port only -- the proxy URL carries a username and password.
     let where = "configured proxy";
     try {
-      where = new URL(env.YTDLP_PROXY).host;
+      where = new URL(proxy).host;
     } catch {
       // Malformed value: yt-dlp will report it; nothing here should ever echo the raw string.
     }
@@ -221,9 +228,9 @@ export type VideoInfo = { title: string | null; durationSeconds: number | null; 
  * private video, a live stream, a 12-hour VOD, or one the owner can't afford is refused in
  * seconds instead of after downloading gigabytes.
  */
-export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
+export async function fetchVideoInfo(url: string, viaProxy = false): Promise<VideoInfo> {
   const result = await runCapture(
-    [url, "--skip-download", "--print", "%(.{title,duration,is_live,live_status})j", ...(await commonArgs(url))],
+    [url, "--skip-download", "--print", "%(.{title,duration,is_live,live_status})j", ...(await commonArgs(url, viaProxy))],
     INFO_TIMEOUT_MS
   );
 
@@ -272,7 +279,7 @@ export async function logYtDlpVersion(): Promise<void> {
   }
 }
 
-async function runYtDlp(url: string, outputPath: string, selection: string[], onProgress?: (percent: number) => void): Promise<void> {
+async function runYtDlp(url: string, outputPath: string, selection: string[], viaProxy: boolean, onProgress?: (percent: number) => void): Promise<void> {
   const args = [
     url,
     ...selection,
@@ -283,7 +290,7 @@ async function runYtDlp(url: string, outputPath: string, selection: string[], on
     "--newline",
     "-o",
     outputPath,
-    ...(await commonArgs(url)),
+    ...(await commonArgs(url, viaProxy)),
   ];
 
   return new Promise((resolve, reject) => {
@@ -347,7 +354,7 @@ async function runYtDlp(url: string, outputPath: string, selection: string[], on
  * Throws UserFacingError for anything a user can act on (private/removed/blocked); a failure it
  * can't explain becomes the generic download message, with the real detail in the logs.
  */
-export async function downloadAudioFromUrl(url: string, outputPath: string, onProgress?: (percent: number) => void): Promise<void> {
+export async function downloadAudioFromUrl(url: string, outputPath: string, onProgress?: (percent: number) => void, viaProxy = false): Promise<void> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
   let updatedYtDlp = false;
@@ -357,7 +364,7 @@ export async function downloadAudioFromUrl(url: string, outputPath: string, onPr
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await runYtDlp(url, outputPath, selection, onProgress);
+      await runYtDlp(url, outputPath, selection, viaProxy, onProgress);
 
       // yt-dlp exiting 0 doesn't guarantee a real, complete file landed (seen with geo-restricted
       // or partially-available sources) — check for real bytes rather than trusting exit code alone.
@@ -392,8 +399,8 @@ export async function downloadAudioFromUrl(url: string, outputPath: string, onPr
   throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
 }
 
-/** One media stream ffmpeg can read directly, with the request headers the site expects. */
-export type StreamInput = { url: string; headers: Record<string, string> };
+/** One media stream, as the site describes it. */
+export type StreamInput = { url: string; headers: Record<string, string>; /** An HLS playlist (Twitch) rather than a single file. */ hls: boolean };
 
 export type ResolvedStreams = {
   /** One combined stream (Twitch) or a video stream followed by an audio stream (YouTube). */
@@ -401,20 +408,19 @@ export type ResolvedStreams = {
   /** Picture size of the chosen stream, which decides how big the working copy is (see quality.ts). */
   width: number;
   height: number;
-  /** The proxy ffmpeg must reach these addresses through, when the site has to be asked via one.
-   *  YouTube ties a stream address to the IP that asked for it, so the bytes go the same way. */
-  proxy: string | null;
 };
 
 /**
  * Asks yt-dlp for the direct stream addresses of a link at the given picture height, WITHOUT
- * downloading anything. ffmpeg can then read just the seconds it needs out of each stream, so a clip
- * from the middle of a 2-hour video costs the traffic of that clip, not of the whole video.
+ * downloading anything. The worker can then read just the seconds it needs out of each stream (see
+ * streamRelay.ts), so a clip from the middle of a 2-hour video costs the traffic of that clip, not of
+ * the whole video.
  *
  * This is one extraction for the whole job rather than one per clip: each extraction is a fresh
- * request the site can refuse, and through a proxy it is billed. The addresses are good for hours.
+ * request the site can refuse, and through a proxy it is billed. The addresses are good for hours --
+ * but only for the IP that asked, so the bytes must be fetched the same way (`viaProxy` the same).
  */
-export async function resolveStreams(url: string, maxHeight: number): Promise<ResolvedStreams> {
+export async function resolveStreams(url: string, maxHeight: number, viaProxy = false): Promise<ResolvedStreams> {
   const result = await runCapture(
     [
       url,
@@ -422,7 +428,7 @@ export async function resolveStreams(url: string, maxHeight: number): Promise<Re
       ...formatArgs(maxHeight),
       "--print",
       "%(.{requested_formats,url,http_headers,width,height,vcodec,protocol})j",
-      ...(await commonArgs(url)),
+      ...(await commonArgs(url, viaProxy)),
     ],
     INFO_TIMEOUT_MS
   );
@@ -448,19 +454,18 @@ export async function resolveStreams(url: string, maxHeight: number): Promise<Re
     console.error("[ytdlp] stream lookup returned no usable stream address");
     throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
   }
-  // ffmpeg can only read plain addresses and HLS playlists; anything fragment-by-fragment would need
-  // yt-dlp's own downloader, which this path doesn't use.
+  // The relay can serve a plain file or an HLS playlist; anything fragment-by-fragment (DASH manifests)
+  // would need yt-dlp's own downloader, which this path doesn't use.
   const unsupported = formats.find((f) => f.protocol && !/^(https?|m3u8|m3u8_native)$/.test(f.protocol));
   if (unsupported) {
-    console.error(`[ytdlp] stream uses protocol "${unsupported.protocol}", which ffmpeg can't read directly`);
+    console.error(`[ytdlp] stream uses protocol "${unsupported.protocol}", which can't be read directly`);
     throw new UserFacingError(GENERIC_DOWNLOAD_FAILURE);
   }
 
   const picture = formats.find((f) => f.vcodec !== "none" && f.width && f.height) ?? formats[0];
   return {
-    inputs: formats.map((f) => ({ url: f.url as string, headers: f.http_headers ?? {} })),
+    inputs: formats.map((f) => ({ url: f.url as string, headers: f.http_headers ?? {}, hls: /^m3u8/.test(f.protocol ?? "") })),
     width: picture.width ?? 0,
     height: picture.height ?? 0,
-    proxy: env.YTDLP_PROXY && isYouTube(url) ? env.YTDLP_PROXY : null,
   };
 }
