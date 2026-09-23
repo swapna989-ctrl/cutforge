@@ -13,7 +13,10 @@ import { parseVideoUrl, shortLabel } from "@/lib/videoUrl";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, type Project } from "@/lib/projects";
 import type { Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount, ClipLength } from "@/lib/pipeline";
-import { CAPTION_FONT_OPTIONS, CAPTION_STYLE_OPTIONS, CAPTION_POSITION_OPTIONS, CAPTION_LINE_COUNT_OPTIONS, CaptionPreview } from "@/lib/captionOptions";
+import { CAPTION_FONT_OPTIONS, CAPTION_POSITION_OPTIONS, CAPTION_LINE_COUNT_OPTIONS } from "@/lib/captionOptions";
+import CaptionStyleCarousel from "@/components/CaptionStyleCarousel";
+import RatioPicker from "@/components/RatioPicker";
+import ClippingStartedToast from "@/components/ClippingStartedToast";
 
 // A project sits in one of these while the worker is actively on it — used to decide whether
 // this page's own poll loop needs to keep running.
@@ -64,6 +67,11 @@ export default function ClippingPage() {
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
+  // A fresh value each time a project is successfully queued — ClippingStartedToast keys off this
+  // changing (rather than a plain boolean) so a second submission re-triggers it even while an
+  // earlier toast is still fading out.
+  const [toastToken, setToastToken] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ready || !user) return;
@@ -187,6 +195,7 @@ export default function ClippingPage() {
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
+    setMoreOptionsOpen(false);
     setPending({
       kind: "file",
       label: files.length === 1 ? files[0].name : `${files.length} files`,
@@ -252,6 +261,7 @@ export default function ClippingPage() {
     setOptionClipLength(prefsReady ? prefs.defaultClipLength : "auto");
     setGenerateError(null);
     setRightsConfirmed(false);
+    setMoreOptionsOpen(false);
     setPending({ kind: "url", label: link.url, creditsEstimate: null, uploadDone: true, files: [] });
   }
 
@@ -302,6 +312,7 @@ export default function ClippingPage() {
           await createProjectClip({ projectId: created.id, position: i + 1, sourceKey: rest[i].sourceKey, fileName: rest[i].fileName, duration: rest[i].duration });
         }
         setProjects((prev) => [{ ...created, status: "draft" }, ...prev]);
+        setToastToken(created.id);
       } else {
         const created = await createProject({
           // Just the address for now -- the worker renames it to the video's real title as soon as
@@ -322,6 +333,7 @@ export default function ClippingPage() {
         });
         setProjects((prev) => [created, ...prev]);
         setUrlInput("");
+        setToastToken(created.id);
       }
       setPending(null);
       setGenerating(false);
@@ -359,219 +371,201 @@ export default function ClippingPage() {
         </p>
       </section>
 
-      {pending ? (
-        /* The configure step — replaces the input bar once a link's been submitted or a file
-           picked, so ratio/caption choices are made right here, right before generating, instead
-           of being invisible defaults from a settings page no one would think to check first. */
-        <section className="mb-8">
-          <div className="bg-white rounded-2xl p-5 border border-[#ECE5E6] shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] space-y-5">
-            <div className="flex items-start justify-between gap-3">
+      <ClippingStartedToast token={toastToken} />
+
+      {pending && (
+        /* The configure step — a real popup now (matching how every other "set this project up"
+           decision in this app already reads as a distinct step, not a settings page no one would
+           think to check first), opened the moment a link's been submitted or a file picked. */
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-[#1d1b1e]/40 backdrop-blur-[2px] p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-[#ECE5E6] shadow-[0_24px_64px_-12px_rgba(42,39,42,0.35)] my-6 sm:my-0 max-h-[calc(100vh-3rem)] flex flex-col">
+            <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4 border-b border-[#ECE5E6] shrink-0">
               <div className="min-w-0">
-                <p className="text-xs font-medium text-[#7B7579] mb-0.5">
-                  {pending.kind === "file" ? (pending.uploadDone ? "Uploaded" : "Uploading") : "Ready to clip"}
+                <h2 className={`${playfair.className} text-lg font-semibold text-[#1d1b1e]`}>Set Up Your Clip</h2>
+                <p className="text-xs text-[#7B7579] mt-0.5 truncate">
+                  {pending.kind === "file" ? (pending.uploadDone ? "Uploaded" : "Uploading") : "Ready to clip"} · {pending.label}
                 </p>
-                <p className="text-sm font-semibold text-[#1d1b1e] truncate">{pending.label}</p>
               </div>
               <button
                 type="button"
                 onClick={handleCancelPending}
-                aria-label="Cancel"
+                aria-label="Close"
                 className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[#7B7579] hover:bg-[#FAF8F7] transition-colors cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
 
-            <label className="flex items-start gap-2.5 rounded-xl border border-[#F0B84B]/40 bg-[#FDF6E8] px-3.5 py-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={rightsConfirmed}
-                onChange={(e) => setRightsConfirmed(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-[#D8D0CE] text-[#ed8395] focus:ring-[#ed8395]/40 cursor-pointer shrink-0"
-              />
-              <span className="text-xs text-[#7B5E2E] leading-snug">
-                I confirm I have the rights to use this video and won&apos;t hold Flovura responsible for how it&apos;s used.
-              </span>
-            </label>
+            <div className="px-5 py-5 space-y-6 overflow-y-auto">
+              <CaptionStyleCarousel value={optionCaptionStyle} onChange={setOptionCaptionStyle} />
 
-            <div>
-              <label className="block text-xs font-medium text-[#7B7579] mb-2">Aspect ratio</label>
-              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
-                {(["9:16", "16:9", "1:1"] as Ratio[]).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setOptionRatio(r)}
-                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
-                      optionRatio === r ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
-                    }`}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            </div>
+              <RatioPicker value={optionRatio} onChange={setOptionRatio} />
 
-            <div>
-              <label className="block text-xs font-medium text-[#7B7579] mb-2">Caption style</label>
-              <div className="grid grid-cols-3 gap-2">
-                {CAPTION_STYLE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setOptionCaptionStyle(opt.value)}
-                    className={`rounded-xl border p-1.5 text-left transition-all duration-150 cursor-pointer ${
-                      optionCaptionStyle === opt.value ? "border-[#ed8395] ring-2 ring-[#ed8395]/25" : "border-[#ECE5E6] hover:border-[#D8D0CE]"
-                    }`}
-                  >
-                    <CaptionPreview
-                      highlight={opt.highlight}
-                      bold={opt.bold}
-                      italic={opt.italic}
-                      uppercase={opt.uppercase}
-                      textColor={opt.textColor}
-                      glow={opt.glow}
-                      noCaptions={opt.noCaptions}
-                    />
-                    <span
-                      className={`block text-center text-[11px] mt-1.5 ${
-                        optionCaptionStyle === opt.value ? "text-[#9a4153] font-semibold" : "text-[#7B7579]"
-                      }`}
-                    >
-                      {opt.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
+              <label className="flex items-start gap-2.5 rounded-xl border border-[#F0B84B]/40 bg-[#FDF6E8] px-3.5 py-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={rightsConfirmed}
+                  onChange={(e) => setRightsConfirmed(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-[#D8D0CE] text-[#ed8395] focus:ring-[#ed8395]/40 cursor-pointer shrink-0"
+                />
+                <span className="text-xs text-[#7B5E2E] leading-snug">
+                  I confirm I have the rights to use this video and won&apos;t hold Flovura responsible for how it&apos;s used.
+                </span>
+              </label>
 
-            <div>
-              <label className="block text-xs font-medium text-[#7B7579] mb-2">Font</label>
-              <div className="grid grid-cols-3 gap-2">
-                {CAPTION_FONT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setOptionCaptionFont(opt.value)}
-                    className={`rounded-xl border px-2 py-2.5 text-center transition-all duration-150 cursor-pointer ${
-                      optionCaptionFont === opt.value ? "border-[#ed8395] ring-2 ring-[#ed8395]/25" : "border-[#ECE5E6] hover:border-[#D8D0CE]"
-                    }`}
-                  >
-                    <span className={`block text-xs truncate ${opt.className} ${optionCaptionFont === opt.value ? "text-[#9a4153]" : "text-[#1d1b1e]"}`}>
-                      {opt.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#7B7579] mb-2">Position</label>
-              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
-                {CAPTION_POSITION_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setOptionCaptionPosition(opt.value)}
-                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
-                      optionCaptionPosition === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#7B7579] mb-2">Line count</label>
-              <div className="inline-flex flex-wrap items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
-                {CAPTION_LINE_COUNT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setOptionCaptionLineCount(opt.value)}
-                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
-                      optionCaptionLineCount === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#7B7579] mb-2">Caption language</label>
-              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
-                <button
-                  type="button"
-                  onClick={() => setOptionCaptionLanguage("auto")}
-                  className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
-                    optionCaptionLanguage === "auto" ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
-                  }`}
-                >
-                  Auto
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOptionCaptionLanguage("hinglish")}
-                  className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
-                    optionCaptionLanguage === "hinglish" ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
-                  }`}
-                >
-                  Hinglish (beta)
-                </button>
-              </div>
-              <p className="text-[11px] text-[#B3ACA6] mt-2">
-                Biases Hindi speech toward Romanized captions (&quot;yeh kya ho raha hai&quot;) instead of Devanagari script. Best-effort —
-                quality can vary, especially on longer clips.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#7B7579] mb-2">Clip length</label>
-              <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
-                {([
-                  { value: "auto", label: "Auto" },
-                  { value: "short", label: "15-30s" },
-                  { value: "long", label: "30-60s" },
-                ] as { value: ClipLength; label: string }[]).map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setOptionClipLength(opt.value)}
-                    className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
-                      optionClipLength === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-[#B3ACA6] mt-2">Auto targets 30-90s per clip — the range Flovura's found works best by default.</p>
-            </div>
-
-            <div className="rounded-xl border border-[#ECE5E6] bg-[#FAF8F7] px-4 py-3">
-              {pending.kind === "file" ? (
-                pending.creditsEstimate != null ? (
-                  <p className="text-xs text-[#544244]">
-                    <span className="font-semibold text-[#1d1b1e]">
-                      ≈ {formatCredits(pending.creditsEstimate)} credit{pending.creditsEstimate === 1 ? "" : "s"}
-                    </span>{" "}
-                    for this video{!pending.uploadDone && <span className="text-[#7B7579]"> · uploading…</span>}
-                  </p>
+              <div className="rounded-xl border border-[#ECE5E6] bg-[#FAF8F7] px-4 py-3">
+                {pending.kind === "file" ? (
+                  pending.creditsEstimate != null ? (
+                    <p className="text-xs text-[#544244]">
+                      <span className="font-semibold text-[#1d1b1e]">
+                        ≈ {formatCredits(pending.creditsEstimate)} credit{pending.creditsEstimate === 1 ? "" : "s"}
+                      </span>{" "}
+                      for this video{!pending.uploadDone && <span className="text-[#7B7579]"> · uploading…</span>}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-[#7B7579]">{pending.uploadDone ? "Uploaded." : "Uploading…"}</p>
+                  )
                 ) : (
-                  <p className="text-xs text-[#7B7579]">{pending.uploadDone ? "Uploaded." : "Uploading…"}</p>
-                )
-              ) : (
-                <p className="text-xs text-[#7B7579]">Credits are based on the video&apos;s real length, calculated once we fetch it.</p>
-              )}
+                  <p className="text-xs text-[#7B7579]">Credits are based on the video&apos;s real length, calculated once we fetch it.</p>
+                )}
+              </div>
+
+              <div className="border-t border-[#ECE5E6] pt-4">
+                <button
+                  type="button"
+                  onClick={() => setMoreOptionsOpen((o) => !o)}
+                  className="w-full flex items-center justify-between text-xs font-semibold text-[#7B7579] hover:text-[#1d1b1e] transition-colors cursor-pointer"
+                >
+                  <span>More options — font, position, language, clip length</span>
+                  <span className={`material-symbols-outlined text-[18px] transition-transform duration-200 ${moreOptionsOpen ? "rotate-180" : ""}`}>
+                    expand_more
+                  </span>
+                </button>
+
+                {moreOptionsOpen && (
+                  <div className="space-y-5 mt-4">
+                    <div>
+                      <label className="block text-xs font-medium text-[#7B7579] mb-2">Font</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {CAPTION_FONT_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setOptionCaptionFont(opt.value)}
+                            className={`rounded-xl border px-2 py-2.5 text-center transition-all duration-150 cursor-pointer ${
+                              optionCaptionFont === opt.value ? "border-[#ed8395] ring-2 ring-[#ed8395]/25" : "border-[#ECE5E6] hover:border-[#D8D0CE]"
+                            }`}
+                          >
+                            <span className={`block text-xs truncate ${opt.className} ${optionCaptionFont === opt.value ? "text-[#9a4153]" : "text-[#1d1b1e]"}`}>
+                              {opt.label}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-[#7B7579] mb-2">Position</label>
+                      <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                        {CAPTION_POSITION_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setOptionCaptionPosition(opt.value)}
+                            className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                              optionCaptionPosition === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-[#7B7579] mb-2">Line count</label>
+                      <div className="inline-flex flex-wrap items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                        {CAPTION_LINE_COUNT_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setOptionCaptionLineCount(opt.value)}
+                            className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                              optionCaptionLineCount === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-[#7B7579] mb-2">Caption language</label>
+                      <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                        <button
+                          type="button"
+                          onClick={() => setOptionCaptionLanguage("auto")}
+                          className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                            optionCaptionLanguage === "auto" ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                          }`}
+                        >
+                          Auto
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOptionCaptionLanguage("hinglish")}
+                          className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                            optionCaptionLanguage === "hinglish" ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                          }`}
+                        >
+                          Hinglish (beta)
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-[#B3ACA6] mt-2">
+                        Biases Hindi speech toward Romanized captions (&quot;yeh kya ho raha hai&quot;) instead of Devanagari script. Best-effort —
+                        quality can vary, especially on longer clips.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-[#7B7579] mb-2">Clip length</label>
+                      <div className="inline-flex items-center p-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                        {([
+                          { value: "auto", label: "Auto" },
+                          { value: "short", label: "15-30s" },
+                          { value: "long", label: "30-60s" },
+                        ] as { value: ClipLength; label: string }[]).map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setOptionClipLength(opt.value)}
+                            className={`text-xs font-medium px-4 py-1.5 rounded-full transition-all duration-200 cursor-pointer ${
+                              optionClipLength === opt.value ? "bg-[#ed8395] text-white font-semibold" : "text-[#7B7579] hover:text-[#1d1b1e]"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-[#B3ACA6] mt-2">Auto targets 30-90s per clip — the range Flovura's found works best by default.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {generateError && <p className="text-xs text-[#B0503E]">{generateError}</p>}
             </div>
 
-            {generateError && <p className="text-xs text-[#B0503E]">{generateError}</p>}
-
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 px-5 py-4 border-t border-[#ECE5E6] shrink-0">
+              <button
+                type="button"
+                onClick={handleCancelPending}
+                disabled={generating}
+                className="px-5 py-3.5 rounded-full border border-[#ECE5E6] text-sm font-medium text-[#1d1b1e] hover:bg-[#FAF8F7] transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
               <button
                 type="button"
                 onClick={handleGenerate}
@@ -581,18 +575,12 @@ export default function ClippingPage() {
                 <span className="material-symbols-outlined text-[18px]">content_cut</span>
                 <span>{generating ? "Starting…" : pending.kind === "file" && !pending.uploadDone ? "Uploading…" : "Generate clips"}</span>
               </button>
-              <button
-                type="button"
-                onClick={handleCancelPending}
-                disabled={generating}
-                className="px-5 py-3.5 rounded-full border border-[#ECE5E6] text-sm font-medium text-[#1d1b1e] hover:bg-[#FAF8F7] transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
             </div>
           </div>
-        </section>
-      ) : (
+        </div>
+      )}
+
+      {!pending && (
         /* Combined entry card. The upload icon always opens the file-upload flow. The URL field
            is real now — the worker downloads whatever's pasted there (see worker/src/ytdlp.ts)
            and then treats it identically to an uploaded file. Submitting either one opens the

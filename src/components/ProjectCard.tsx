@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Project } from "@/lib/projects";
 import { deleteProject, listShorts } from "@/lib/projects";
+import CircularProgress from "@/components/CircularProgress";
 
 export default function ProjectCard({ project, onDeleted }: { project: Project; onDeleted: (id: string) => void }) {
   const router = useRouter();
@@ -86,7 +87,7 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
       ? { text: "Ready", cls: "bg-[#10B981]/10 text-[#10B981]" }
       : isIngesting
         ? { text: "Draft", cls: "bg-[#B3ACA6]/15 text-[#7B7579]" }
-        : { text: `Processing… ${project.progress}%`, cls: "bg-[#F59E0B]/15 text-[#F59E0B]" };
+        : { text: "Processing…", cls: "bg-[#F59E0B]/15 text-[#F59E0B]" }; // the ring below already shows the percent
 
   // Only a finished project (ready or failed) has anywhere real to go — a still-processing one
   // has no clips yet, so it stays put on this page and its progress bar below is the loading
@@ -101,12 +102,7 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2">
             {isIngesting && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">edit_note</span>}
-            {!isReady && !isFailed && !isIngesting && (
-              <>
-                <div className="w-6 h-6 rounded-full border-2 border-[#ECE5E6] border-t-[#ed8395] animate-spin" />
-                <span className="text-xs font-semibold text-[#B3ACA6]">{project.progress}%</span>
-              </>
-            )}
+            {!isReady && !isFailed && !isIngesting && <CircularProgress percent={project.progress} />}
             {isFailed && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">error_outline</span>}
             {isReady && !videoSrc && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">movie</span>}
           </div>
@@ -129,10 +125,13 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
 
         {!isReady && !isFailed && !isIngesting && (
           <div className="pt-2">
-            <div className="w-full bg-[#ECE5E6] rounded-full h-1 overflow-hidden">
-              <div className="bg-[#F59E0B] h-full rounded-full transition-all duration-500" style={{ width: `${project.progress}%` }} />
-            </div>
-            {project.statusMessage && <p className="text-[11px] text-[#B3ACA6] mt-1.5">{project.statusMessage}</p>}
+            {project.statusMessage && (
+              <span className="inline-flex items-center gap-1.5 max-w-full px-2.5 py-1 rounded-full bg-[#FAF8F7] border border-[#ECE5E6]">
+                <span className="w-3 h-3 rounded-full border-2 border-[#ECE5E6] border-t-[#ed8395] animate-spin shrink-0" />
+                <span className="text-[11px] text-[#544244] truncate">{project.statusMessage}</span>
+              </span>
+            )}
+            <p className="text-[11px] text-[#B3ACA6] mt-2 leading-snug">Long videos can take 20-30 minutes.</p>
           </div>
         )}
 
