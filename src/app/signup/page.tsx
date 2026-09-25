@@ -2,7 +2,6 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Playfair_Display } from "next/font/google";
 import AuthShell from "@/components/AuthShell";
 import PasswordInput from "@/components/PasswordInput";
@@ -13,7 +12,6 @@ const playfair = Playfair_Display({ subsets: ["latin"], weight: ["600"], style: 
 
 export default function SignupPage() {
   const auth = useAuth();
-  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,8 +19,10 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (auth.ready && auth.user) router.replace("/dashboard");
-  }, [auth.ready, auth.user, router]);
+    // A full navigation, not router.replace -- see LoginForm's identical comment: this clears any
+    // stale, logged-out page the client's router cache may still be holding from before sign-in.
+    if (auth.ready && auth.user) window.location.href = "/dashboard";
+  }, [auth.ready, auth.user]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -35,7 +35,7 @@ export default function SignupPage() {
       setError(signUpError);
       return;
     }
-    router.push("/dashboard");
+    window.location.href = "/dashboard";
   }
 
   return (

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Playfair_Display } from "next/font/google";
 import AuthShell from "@/components/AuthShell";
 import PasswordInput from "@/components/PasswordInput";
@@ -13,7 +13,6 @@ const playfair = Playfair_Display({ subsets: ["latin"], weight: ["600"], style: 
 
 export default function LoginForm() {
   const auth = useAuth();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,8 +21,13 @@ export default function LoginForm() {
   const [error, setError] = useState<string | null>(() => searchParams.get("error"));
 
   useEffect(() => {
-    if (auth.ready && auth.user) router.replace("/dashboard");
-  }, [auth.ready, auth.user, router]);
+    // A full navigation, not router.replace -- someone landing here already signed in may have
+    // browsed anonymously in this same tab before, and Next's client-side router cache can still be
+    // holding a stale, logged-out copy of a static page (e.g. /pricing) from back then. A real page
+    // load clears that cache and gives the server (and its middleware -- see src/proxy.ts) a fresh
+    // request with the real cookie, instead of trusting whatever the client already had cached.
+    if (auth.ready && auth.user) window.location.href = "/dashboard";
+  }, [auth.ready, auth.user]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -36,7 +40,10 @@ export default function LoginForm() {
       setError(signInError);
       return;
     }
-    router.push("/dashboard");
+    // A full navigation for the same reason as the effect above -- this is the moment auth state
+    // just changed from anonymous to signed-in, which is exactly when a stale client-cached page
+    // from before sign-in would otherwise survive into the new session.
+    window.location.href = "/dashboard";
   }
 
   return (
