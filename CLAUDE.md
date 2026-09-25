@@ -2,53 +2,69 @@
 
 # CutForge — Project Direction
 
-**As of 2026-09-14, CutForge's target product changed.** This section is the source of truth
-for what CutForge is building toward — read it before assuming the current single-output
-pipeline is the end goal.
+**As of 2026-09-14, CutForge's target product changed** from a single-output editing tool to a
+full AI clipping platform, similar to Vugola (vugolaai.com). **As of 2026-09-25, most of that
+target is actually built** — this file was badly out of date (it still described the planner,
+multi-clip generation, and YouTube ingestion as unstarted) and has been rewritten to match the
+real code. Read the "What's actually built" section below before assuming otherwise; don't trust
+an older cached copy of this file over the code itself.
 
-## Target product (not yet fully built)
+## Target product
 
-CutForge is becoming a full AI clipping platform, similar to Vugola (vugolaai.com):
-
-- User pastes a YouTube/Twitch link **or** uploads a video file.
+- User pastes a YouTube/Twitch link **or** uploads a video file. ✅ Built.
 - AI automatically finds and generates **multiple** clips from one long video — not one output
-  per project.
-- Each generated clip gets an AI-estimated **viral score** and an AI-written hook/caption.
-- A **Shorts gallery** shows all generated clips for a project.
-- Per-clip caption editing with style presets.
-- Direct **publishing** to TikTok/Reels/YouTube Shorts (later phase).
-- **Analytics** on posted clips (later phase).
+  per project. ✅ Built.
+- Each generated clip gets an AI-estimated **viral score** and an AI-written hook/caption. ✅ Built.
+- A **Shorts gallery** shows all generated clips for a project. ✅ Built.
+- Per-clip caption/ratio/crop editing with style presets, regenerated independently of the rest
+  of the project. ✅ Built.
+- Direct **publishing** to TikTok/Reels/YouTube Shorts. ❌ Not built — the real remaining gap.
+- **Analytics** on posted clips. ❌ Not built — depends on publishing existing first.
 
-## What already exists and stays as the foundation
+## What's actually built (verify against the code before describing it as missing)
 
-Not a rebuild — the target above is built *on top of* the current real pipeline, not instead
-of it:
-- Supabase (auth, Postgres, RLS) for accounts and project/clip data.
-- Cloudflare R2 for source and output video storage.
-- The Railway-hosted worker (`worker/`) running FFmpeg (dead-air removal, resolution
-  normalization, multi-clip concat, caption burn-in) and OpenAI Whisper (transcription).
-- The Stitch-derived warm-editorial UI (Playfair Display + Plus Jakarta Sans, rose/cream
+- **Supabase** (auth, Postgres, RLS) for accounts, `projects`, `shorts`, and `billing`.
+- **Cloudflare R2** for source video, per-short saved footage, rendered outputs, and thumbnails.
+- **The Railway-hosted worker** (`worker/`, service `cutforge`) running FFmpeg (dead-air removal,
+  resolution normalization, multi-clip concat, caption burn-in, per-short re-render), OpenAI
+  Whisper (`whisper-1`, transcription + Hinglish transliteration), and GPT-4o-mini for both the AI
+  Clip Planner and caption transcription.
+- **AI Clip Planner** (`worker/src/clipPlanner.ts`): takes the Whisper transcript and a target
+  clip count scaled to video length (`targetClipCount`, 3–50 clips, ~1 per 2.5 minutes of source —
+  benchmarked directly against Vugola's own ~50-clips-from-128-minutes ratio), and returns
+  candidate `{startTime, endTime, hook, caption, viralScore}` objects per clip. `viralScore` is an
+  LLM estimate (0–100), not measured outcome data — there's no posted-clip performance signal to
+  train or calibrate against yet.
+- **Multi-clip generation per project**: one job produces multiple `shorts` rows and multiple
+  rendered outputs, each independently re-renderable (see below) — not the single-output-per-project
+  model this file used to describe. (`project_clips` is a separate, older concept: multiple *source*
+  clips merged into one output, still used by the multi-source-upload path.)
+- **YouTube/Twitch URL ingestion** (`worker/src/ytdlp.ts`, `videoUrl.ts`): downloads audio for
+  transcription and reads picture directly from the site's own stream via a relay
+  (`streamRelay.ts`) rather than downloading the whole video. Direct-first, with a residential
+  proxy (DataImpulse) fallback when YouTube's bot detection blocks the direct request — see
+  `worker/src/pipeline.ts`'s `withProxyFallback` and `proxyForSession`'s per-job sticky IP
+  sessions (needed because YouTube's signed stream URLs are IP-locked).
+- **Shorts gallery + per-clip editing** (`ShortsGallery.tsx`, `src/app/shorts/edit/page.tsx`):
+  caption style/font/position/language/line-count, ratio, and a manual crop-center override, all
+  per-short (inheriting the parent project's defaults when unset). Regenerating a short costs a
+  flat 15 credits, refunded automatically if that specific regenerate attempt fails
+  (`refund_short_regenerate_credit`) without ever touching an earlier successful regenerate's
+  charge.
+- **Credit system**: plan credits → paid credits → free credits draw-down order; a project's full
+  charge is refunded automatically if the whole job fails (`refund_project_credits`); job claiming
+  is atomic (`claimNextJob`/`claimNextShortRegenerate` in `worker/src/supabase.ts`), safe for
+  multiple concurrent workers even though only one runs today.
+- **The Stitch-derived warm-editorial UI** (Playfair Display + Plus Jakarta Sans, rose/cream
   palette) across auth, dashboard, and workspace.
-- The existing `projects` / `project_clips` schema and upload-to-R2 flow.
 
-## What's actually missing, in build order
+## What's actually still missing
 
-1. **AI Clip Planner** — an LLM step that takes a Whisper transcript and outputs 3–5 candidate
-   clip timestamps + hook lines + captions as JSON. *(Next task, not yet started.)*
-2. Wire the planner into the worker so **one video produces multiple clip records and multiple
-   rendered outputs**, not one — this is a real change to `worker/src/pipeline.ts`'s job model,
-   distinct from the existing `project_clips` table (which today holds multiple *source* clips
-   merged into one output, not multiple *generated* outputs from one source).
-3. YouTube/Twitch URL ingestion — download before processing, then reuse the existing
-   upload-flow pipeline unchanged from that point on.
-4. A real viral score — can start as a simple heuristic or LLM-estimated score; doesn't need to
-   be sophisticated at first.
-5. Publishing integrations (TikTok/Reels/YouTube APIs) — later, after 1–4 work.
+1. **Publishing integrations** (TikTok/Reels/YouTube Shorts APIs) — direct posting from the Shorts
+   gallery. `ShortsGallery.tsx` already has a disabled "Direct publishing is coming soon" button
+   as the intended hook point.
+2. **Analytics** on posted clips — depends on #1 existing first (nothing is posted yet to have
+   analytics about).
 
-## Current actual implementation status (do not assume otherwise)
-
-As of this writing, the real, working pipeline still produces **one edited output per
-project** (multiple *source* clips can be merged into that one output, but the system does not
-yet generate multiple candidate Shorts from a single long video, has no viral score, no
-YouTube/Twitch ingestion, and no publishing integrations). Treat every item in "what's actually
-missing" above as unbuilt until a task explicitly implements it.
+Treat only these two as unbuilt. Everything else in "What's actually built" above is real,
+deployed, working code — confirm against the actual files cited before telling a user otherwise.
