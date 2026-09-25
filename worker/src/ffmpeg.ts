@@ -622,13 +622,18 @@ const CAPTION_PRESETS: Record<BurnedCaptionStyle, CaptionPresetSpec> = {
     uppercase: true,
     primaryColor: "&H00FFFFFF", // white
     outlineColor: "&H00000000", // black — the crisp copy's own thin outline, for legibility
-    outlineWidth: 4,
+    // Thinner than every other style's 4px on purpose: at this preset's much wider/softer halo (see
+    // glow below), a full-weight outline visually competed with the glow instead of receding behind
+    // it — confirmed by real render/frame comparison against a reference "strong glow" screenshot.
+    outlineWidth: 2,
     highlightColor: null,
-    // Verified by real render/frame-extraction: a wide, heavily blurred white halo behind a
-    // crisp black-outlined copy reads as an actual glow; anything blurring the crisp outline
-    // itself either stayed a fuzzy blob (thin outline) or melted adjacent letters/words together
-    // well before the blur looked like a glow (thick outline) — see CaptionPresetSpec.glow.
-    glow: { haloBorder: 24, haloBlur: 6, haloColor: "&HFFFFFF&" },
+    // 24/6 (the original values) read as barely more than a faint ring around the letters, not a
+    // real glow — confirmed by direct comparison against a reference screenshot showing a wide, soft,
+    // clearly-visible bloom. Bumped until it matched: verified by rendering several intensities side
+    // by side (24/6, 36/10, 44/14, 50/16) and picking the one closest to the reference rather than
+    // guessing a single number. Above ~44/14, adjacent letters start fusing into one solid blob and
+    // the per-letter shape is lost entirely — this stays just under that line. See CaptionPresetSpec.glow.
+    glow: { haloBorder: 44, haloBlur: 14, haloColor: "&HFFFFFF&" },
   },
   punch: {
     fontSize: 68,
