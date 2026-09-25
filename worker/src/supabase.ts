@@ -279,3 +279,17 @@ export async function chargeShortRegenerateCredit(shortId: string): Promise<void
   const { error } = await supabase.rpc("charge_short_regenerate_credit", { p_short_id: shortId }).single();
   if (error) throw new Error(error.message);
 }
+
+/**
+ * Puts back a short's most recent regenerate charge, into whichever plan/paid/free buckets it
+ * actually came from (see refund_short_regenerate_credit in
+ * supabase/migrations/0031_refund_regenerate_credits.sql) -- call only from the same attempt that
+ * just charged and then failed, never unconditionally on every failure: a short can be regenerated
+ * many times, and this only ever knows about the latest charge, not which specific attempt a caller
+ * meant. Safe to call on a short with nothing outstanding (returns 0) and safe to call twice.
+ */
+export async function refundShortRegenerateCredit(shortId: string): Promise<number> {
+  const { data, error } = await supabase.rpc("refund_short_regenerate_credit", { p_short_id: shortId }).single();
+  if (error) throw new Error(error.message);
+  return (data as { refunded_credits: number }).refunded_credits;
+}

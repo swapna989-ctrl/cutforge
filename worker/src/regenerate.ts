@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { downloadToFile, uploadFromFile } from "./r2.js";
 import { extractClipRange, extractFrame, getDuration, getVideoDimensions, STANDARD_LONG_EDGE, HD_LONG_EDGE } from "./ffmpeg.js";
 import { renderShort, clipSourceKey } from "./render.js";
-import { getProject, updateShort, chargeShortRegenerateCredit, type ProjectRow, type ShortRow } from "./supabase.js";
+import { getProject, updateShort, chargeShortRegenerateCredit, refundShortRegenerateCredit, type ProjectRow, type ShortRow } from "./supabase.js";
 import { toUserMessage, UserFacingError } from "./errors.js";
 
 /** null on the short means "inherit the parent project's current default" — same nullable-override
@@ -42,10 +42,17 @@ async function downloadClipSource(project: ProjectRow, short: ShortRow, localPat
  *
  * On failure, the short reverts to status 'ready' (never 'failed') with its output_key
  * untouched — output_key is only ever written on a successful new render, so a failed edit
- * attempt can never destroy or hide the short's last good version.
+ * attempt can never destroy or hide the short's last good version. If this attempt got as far as
+ * charging before it failed, that charge is refunded too (see refundShortRegenerateCredit) --
+ * failing to produce a new version shouldn't cost the credit any more than failing to produce a
+ * first one does (see chargeProjectCredits/refundProjectCredits's identical reasoning).
  */
 export async function regenerateShort(short: ShortRow): Promise<void> {
   const tmpDir = await mkdtemp(join(tmpdir(), "cutforge-regen-"));
+  // Tracks whether THIS attempt charged, not whether this short has ever been charged -- a short
+  // can be regenerated many times, and the refund below must only ever apply to the attempt that's
+  // failing right now, never to an earlier, already-successful regenerate's charge.
+  let charged = false;
   try {
     const project = await getProject(short.project_id);
     if (!project) throw new Error(`No project ${short.project_id} for short ${short.id}`);
@@ -56,6 +63,7 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
       // Charged before any of the metered Whisper/render calls below run — same "charge before the
       // expensive work starts" ordering as the project-level charge_project_credits.
       await chargeShortRegenerateCredit(short.id);
+      charged = true;
       const trimmedPath = join(tmpDir, "trimmed.mp4");
       await downloadToFile(project.trimmed_key as string, trimmedPath);
       await extractClipRange(trimmedPath, short.source_start_seconds, short.source_end_seconds, clipPath);
@@ -63,6 +71,7 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
       // The footage is fetched first: a short whose footage is gone must not cost a credit.
       await downloadClipSource(project, short, clipPath);
       await chargeShortRegenerateCredit(short.id);
+      charged = true;
     }
 
     // The size the footage was made at, so removing its dead air can't quietly shrink it.
@@ -97,7 +106,18 @@ export async function regenerateShort(short: ShortRow): Promise<void> {
     await updateShort(short.id, patch);
   } catch (err) {
     console.error(`Regenerate failed for short ${short.id}:`, err);
-    await updateShort(short.id, { status: "ready", error_message: toUserMessage(err) }).catch((updateErr) =>
+
+    let refundedCredits = 0;
+    if (charged) {
+      try {
+        refundedCredits = await refundShortRegenerateCredit(short.id);
+      } catch (refundErr) {
+        console.error(`Short ${short.id}: regenerate refund failed (the failure itself is still recorded):`, refundErr);
+      }
+    }
+    const refundNote = refundedCredits > 0 ? " Your credits for this edit have been refunded." : "";
+
+    await updateShort(short.id, { status: "ready", error_message: toUserMessage(err) + refundNote }).catch((updateErr) =>
       console.error("Also failed to record the short's regenerate failure:", updateErr)
     );
   } finally {
