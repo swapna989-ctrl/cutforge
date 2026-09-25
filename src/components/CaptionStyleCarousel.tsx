@@ -95,9 +95,6 @@ export default function CaptionStyleCarousel({
             ) : (
               <img src={previewSrc(value, "jpg")} alt={`${STYLE_LABELS[value]} preview`} className="w-full h-full object-cover" />
             )}
-            <div className="absolute bottom-0 inset-x-0 py-1.5 text-center bg-gradient-to-t from-black/70 to-transparent">
-              <span className="text-[11px] font-semibold text-white">{STYLE_LABELS[value]}</span>
-            </div>
           </div>
 
           <div className="hidden sm:block shrink-0 w-6 aspect-[9/16] rounded-lg overflow-hidden opacity-35 bg-[#1a1a1a]">
@@ -115,7 +112,14 @@ export default function CaptionStyleCarousel({
         </button>
       </div>
 
-      <div className="flex items-center justify-center gap-1.5 mt-3">
+      {/* The style name used to overlay the bottom of the video card itself, right where the burned-in
+          demo caption also sits -- two separate pieces of text stacked in a ~136px-wide card read as
+          clutter, and made every style's demo harder to read, not just one. A plain label below the
+          card (same place the dot indicators already live) shows the same information without ever
+          competing with the actual caption preview for space. */}
+      <p className="text-center text-xs font-semibold text-[#1d1b1e] mt-2">{STYLE_LABELS[value]}</p>
+
+      <div className="flex items-center justify-center gap-1.5 mt-2">
         {STYLE_ORDER.map((style) => (
           <button
             key={style}

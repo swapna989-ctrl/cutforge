@@ -377,7 +377,14 @@ export default function ClippingPage() {
         /* The configure step — a real popup now (matching how every other "set this project up"
            decision in this app already reads as a distinct step, not a settings page no one would
            think to check first), opened the moment a link's been submitted or a file picked. */
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-[#1d1b1e]/40 backdrop-blur-[2px] p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-[#1d1b1e]/40 backdrop-blur-[2px] p-4">
+          {/* The card's own max-h + this wrapper's my-6 sum to exactly 100vh (3rem = 1.5rem*2), so
+              the card can never be taller than the viewport -- it never needs to be scrolled INTO
+              view itself. Only its body (below) scrolls. A second overflow-y-auto here (removed)
+              used to compete with that inner scroll: with the pointer over the body (most of the
+              card), every scroll gesture went to the body's own scroll container and never reached
+              this outer one, so once the header got scrolled even slightly out of view there was no
+              way to scroll it back -- reported as the popup being "stuck"/"glitching". */}
           <div className="w-full max-w-md bg-white rounded-2xl border border-[#ECE5E6] shadow-[0_24px_64px_-12px_rgba(42,39,42,0.35)] my-6 sm:my-0 max-h-[calc(100vh-3rem)] flex flex-col">
             <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4 border-b border-[#ECE5E6] shrink-0">
               <div className="min-w-0">
