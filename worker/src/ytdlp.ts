@@ -71,14 +71,45 @@ export function isYouTube(url: string): boolean {
   }
 }
 
+// Holds one residential IP for the life of a job. YouTube's own signed stream addresses are locked
+// to the IP that requested them (see resolveStreams), so every request in a job -- resolving those
+// addresses AND every later read of bytes from them through the relay (see pipeline.ts) -- has to go
+// out through the same IP, not whatever a bare proxy connection would hand out per-request. This is
+// DataImpulse's own syntax for that: appending `__sessid.<id>;sessttl.<minutes>` to the proxy username
+// holds one IP for that many minutes, reused on every connection carrying the same sessid (confirmed
+// against https://docs.dataimpulse.com/proxies/parameters/session-id and .../session-interval). 30
+// minutes comfortably covers one job's audio download plus however many clip fetches follow it.
+const STICKY_SESSION_MINUTES = 30;
+
+/**
+ * A per-job sticky-session version of the configured base proxy (`http://login:password@host:port`,
+ * no session info of its own). Built by hand rather than through the URL object's `.username` setter,
+ * which would percent-encode the literal `;` DataImpulse's syntax needs -- both consumers of the
+ * result decode it back out before use (confirmed directly: https-proxy-agent parses it into a URL
+ * and calls `decodeURIComponent` on the username before building the Proxy-Authorization header;
+ * yt-dlp gets the raw string as a `--proxy` CLI argument and Python's own urllib does the same), so a
+ * literal, unescaped `;` is what has to go out on the wire, not `%3B`.
+ */
+export function proxyForSession(baseProxy: string, sessionId: string): string {
+  const u = new URL(baseProxy);
+  // Alphanumeric only -- a job id's hyphens aren't guaranteed safe in every provider's session-id
+  // syntax, and stripping them is lossless (the id is still unique per job).
+  const safeId = sessionId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 64) || "default";
+  const user = `${decodeURIComponent(u.username)}__sessid.${safeId};sessttl.${STICKY_SESSION_MINUTES}`;
+  const pass = decodeURIComponent(u.password);
+  return `${u.protocol}//${user}${pass ? `:${pass}` : ""}@${u.host}`;
+}
+
 /** The proxy this call should go through: only when asked to (`viaProxy`) and only for YouTube --
- *  Twitch works from a datacenter, and a proxy bills per gigabyte. */
-export function proxyFor(url: string, viaProxy: boolean): string | null {
-  return viaProxy && env.YTDLP_PROXY && isYouTube(url) ? env.YTDLP_PROXY : null;
+ *  Twitch works from a datacenter, and a proxy bills per gigabyte. `sessionId` ties every request for
+ *  one job to the same residential IP (see proxyForSession); it's ignored when there's no proxy to
+ *  apply it to. */
+export function proxyFor(url: string, viaProxy: boolean, sessionId: string): string | null {
+  return viaProxy && env.YTDLP_PROXY && isYouTube(url) ? proxyForSession(env.YTDLP_PROXY, sessionId) : null;
 }
 
 /** Flags every yt-dlp call shares. */
-async function commonArgs(url: string, viaProxy: boolean): Promise<string[]> {
+async function commonArgs(url: string, viaProxy: boolean, sessionId: string): Promise<string[]> {
   const cookiesPath = await resolveCookiesFilePath();
   // Real diagnostic, not a guess — every past failure required inferring whether cookies were
   // even in play from indirect evidence (which error message came back). This says so directly.
@@ -103,7 +134,7 @@ async function commonArgs(url: string, viaProxy: boolean): Promise<string[]> {
   // a home IP hasn't needed it.
   if (cookiesPath) args.push("--cookies", cookiesPath);
 
-  const proxy = proxyFor(url, viaProxy);
+  const proxy = proxyFor(url, viaProxy, sessionId);
   if (proxy) {
     args.push("--proxy", proxy);
     // Host and port only -- the proxy URL carries a username and password.
@@ -228,9 +259,9 @@ export type VideoInfo = { title: string | null; durationSeconds: number | null; 
  * private video, a live stream, a 12-hour VOD, or one the owner can't afford is refused in
  * seconds instead of after downloading gigabytes.
  */
-export async function fetchVideoInfo(url: string, viaProxy = false): Promise<VideoInfo> {
+export async function fetchVideoInfo(url: string, viaProxy = false, sessionId = ""): Promise<VideoInfo> {
   const result = await runCapture(
-    [url, "--skip-download", "--print", "%(.{title,duration,is_live,live_status})j", ...(await commonArgs(url, viaProxy))],
+    [url, "--skip-download", "--print", "%(.{title,duration,is_live,live_status})j", ...(await commonArgs(url, viaProxy, sessionId))],
     INFO_TIMEOUT_MS
   );
 
@@ -279,7 +310,7 @@ export async function logYtDlpVersion(): Promise<void> {
   }
 }
 
-async function runYtDlp(url: string, outputPath: string, selection: string[], viaProxy: boolean, onProgress?: (percent: number) => void): Promise<void> {
+async function runYtDlp(url: string, outputPath: string, selection: string[], viaProxy: boolean, sessionId: string, onProgress?: (percent: number) => void): Promise<void> {
   const args = [
     url,
     ...selection,
@@ -290,7 +321,7 @@ async function runYtDlp(url: string, outputPath: string, selection: string[], vi
     "--newline",
     "-o",
     outputPath,
-    ...(await commonArgs(url, viaProxy)),
+    ...(await commonArgs(url, viaProxy, sessionId)),
   ];
 
   return new Promise((resolve, reject) => {
@@ -354,7 +385,7 @@ async function runYtDlp(url: string, outputPath: string, selection: string[], vi
  * Throws UserFacingError for anything a user can act on (private/removed/blocked); a failure it
  * can't explain becomes the generic download message, with the real detail in the logs.
  */
-export async function downloadAudioFromUrl(url: string, outputPath: string, onProgress?: (percent: number) => void, viaProxy = false): Promise<void> {
+export async function downloadAudioFromUrl(url: string, outputPath: string, onProgress?: (percent: number) => void, viaProxy = false, sessionId = ""): Promise<void> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
   let updatedYtDlp = false;
@@ -364,7 +395,7 @@ export async function downloadAudioFromUrl(url: string, outputPath: string, onPr
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await runYtDlp(url, outputPath, selection, viaProxy, onProgress);
+      await runYtDlp(url, outputPath, selection, viaProxy, sessionId, onProgress);
 
       // yt-dlp exiting 0 doesn't guarantee a real, complete file landed (seen with geo-restricted
       // or partially-available sources) — check for real bytes rather than trusting exit code alone.
@@ -420,7 +451,7 @@ export type ResolvedStreams = {
  * request the site can refuse, and through a proxy it is billed. The addresses are good for hours --
  * but only for the IP that asked, so the bytes must be fetched the same way (`viaProxy` the same).
  */
-export async function resolveStreams(url: string, maxHeight: number, viaProxy = false): Promise<ResolvedStreams> {
+export async function resolveStreams(url: string, maxHeight: number, viaProxy = false, sessionId = ""): Promise<ResolvedStreams> {
   const result = await runCapture(
     [
       url,
@@ -428,7 +459,7 @@ export async function resolveStreams(url: string, maxHeight: number, viaProxy = 
       ...formatArgs(maxHeight),
       "--print",
       "%(.{requested_formats,url,http_headers,width,height,vcodec,protocol})j",
-      ...(await commonArgs(url, viaProxy)),
+      ...(await commonArgs(url, viaProxy, sessionId)),
     ],
     INFO_TIMEOUT_MS
   );

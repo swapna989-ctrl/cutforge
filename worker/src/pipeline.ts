@@ -2,7 +2,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir, cpus, totalmem, freemem } from "node:os";
 import { join } from "node:path";
 import { downloadToFile, uploadFromFile } from "./r2.js";
-import { downloadAudioFromUrl, fetchVideoInfo, resolveStreams, isYouTube, type VideoInfo } from "./ytdlp.js";
+import { downloadAudioFromUrl, fetchVideoInfo, resolveStreams, isYouTube, proxyForSession, type VideoInfo } from "./ytdlp.js";
 import { registerStream, type RegisteredStream } from "./streamRelay.js";
 import { env } from "./env.js";
 import { parseVideoUrl, PLATFORM_LABEL } from "./videoUrl.js";
@@ -265,7 +265,8 @@ export async function processJob(job: ProjectRow): Promise<void> {
             lastReportedAt = now;
             updateJob(job.id, { status_message: `Downloading the audio from ${platform}… ${percent}%`, progress: 5 + Math.floor(percent * 0.07) }).catch(() => {});
           },
-          viaProxy
+          viaProxy,
+          job.id
         )
       );
 
@@ -276,14 +277,16 @@ export async function processJob(job: ProjectRow): Promise<void> {
       // gigabyte-billed video stream, never a wasted whole job.
       await updateJob(job.id, { status_message: `Preparing the ${platform} video…`, progress: 13 });
       const maxHeight = linkedDownloadMaxHeight(job.ratio);
-      const { value: streams, viaProxy } = await withProxyFallback(link.url, (viaProxy) => resolveStreams(link.url, maxHeight, viaProxy));
+      const { value: streams, viaProxy } = await withProxyFallback(link.url, (viaProxy) => resolveStreams(link.url, maxHeight, viaProxy, job.id));
       const hd = wantsHdWorkingCopy(job.ratio, streams.width > 0 && streams.height > 0 ? streams : undefined);
       const longEdge = hd ? HD_LONG_EDGE : STANDARD_LONG_EDGE;
       console.log(`[quality] job ${job.id}: stream ${streams.width}x${streams.height}, ratio ${job.ratio}, proxy ${viaProxy} -> working copy capped at ${longEdge}px`);
 
       // Addresses are bound to the IP that asked for them (YouTube), so bytes fetched for them must
-      // go the same way (direct or through the same proxy) as the request that produced them.
-      const proxy = viaProxy && env.YTDLP_PROXY ? env.YTDLP_PROXY : null;
+      // go the same way (direct, or through the exact same sticky-session proxy identity) as the
+      // request that produced them -- job.id as the session id is what keeps this and the refresh
+      // below on the same residential IP as the resolveStreams call that just ran.
+      const proxy = viaProxy && env.YTDLP_PROXY ? proxyForSession(env.YTDLP_PROXY, job.id) : null;
       const relayStreams = await Promise.all(streams.inputs.map((s) => registerStream({ url: s.url, headers: s.headers, proxy, hls: s.hls })));
       registeredStreams.push(...relayStreams);
       const linkedFootage: Extract<Footage, { source: "relay" }> = {
@@ -292,7 +295,7 @@ export async function processJob(job: ProjectRow): Promise<void> {
         longEdge,
         refresh: async () => {
           console.log(`[pipeline] job ${job.id}: re-resolving ${platform} stream addresses for a retry`);
-          const fresh = await resolveStreams(link.url, maxHeight, viaProxy);
+          const fresh = await resolveStreams(link.url, maxHeight, viaProxy, job.id);
           const freshStreams = await Promise.all(fresh.inputs.map((s) => registerStream({ url: s.url, headers: s.headers, proxy, hls: s.hls })));
           registeredStreams.push(...freshStreams);
           // The old registrations are left in `registeredStreams` too and released with everything
