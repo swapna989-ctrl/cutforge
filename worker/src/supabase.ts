@@ -40,8 +40,14 @@ export type ProjectRow = {
 };
 
 export async function claimNextJob(skipIds: string[] = []): Promise<ProjectRow | null> {
-  // Not a true atomic claim (fine for a single-worker v1 — revisit with a proper
-  // SELECT ... FOR UPDATE SKIP LOCKED RPC before running more than one worker at once).
+  // Picking which job to try is NOT what makes this safe with more than one worker running --
+  // two workers can both select the same still-queued row here, and that's fine. What makes it
+  // safe is the update below actually being checked: Postgres only lets one concurrent update
+  // change a row that still matches `pipeline_status = 'queued'`, so asking it to hand back the
+  // row it changed (.select().maybeSingle(), instead of just checking for an error) is what tells
+  // a worker whether IT actually won that race. An earlier version of this function didn't check
+  // that -- both workers would get past the update and go process the same job, a real way to
+  // double-charge credits and render a project's shorts twice, not a hypothetical.
   // `skipIds` are jobs waiting out a retry delay (see blockedRetry.ts): still "queued" in the
   // database, but not to be picked up until their time comes.
   let query = supabase.from("projects").select("*").eq("pipeline_status", "queued");
@@ -50,14 +56,18 @@ export async function claimNextJob(skipIds: string[] = []): Promise<ProjectRow |
   if (error) throw error;
   if (!data) return null;
 
-  const { error: claimError } = await supabase
+  const { data: claimed, error: claimError } = await supabase
     .from("projects")
     .update({ pipeline_status: "synthesizing", progress: 0, status_message: "Starting up…" })
     .eq("id", data.id)
-    .eq("pipeline_status", "queued"); // only claim if still queued (basic race guard)
+    .eq("pipeline_status", "queued") // the real race guard -- see comment above
+    .select()
+    .maybeSingle();
   if (claimError) throw claimError;
 
-  return { ...data, pipeline_status: "synthesizing", progress: 0 };
+  // null here means another worker's update won the race between our select and our update --
+  // this job is theirs now, not a failure, just nothing for this call to do.
+  return claimed;
 }
 
 export async function updateJob(id: string, patch: Partial<ProjectRow>): Promise<void> {
@@ -219,9 +229,9 @@ export async function claimNextPreviewFrame(): Promise<ShortRow | null> {
   return data;
 }
 
-/** Same claim pattern as claimNextJob (update-with-status-guard as the race check), just for one
- *  short instead of one project — set by the frontend's Regenerate button, only ever moved onward
- *  by this function. */
+/** Same claim pattern as claimNextJob (the update's own returned row is the real race check, not
+ *  just the absence of an error), just for one short instead of one project — set by the
+ *  frontend's Regenerate button, only ever moved onward by this function. */
 export async function claimNextShortRegenerate(): Promise<ShortRow | null> {
   const { data, error } = await supabase
     .from("shorts")
@@ -233,14 +243,16 @@ export async function claimNextShortRegenerate(): Promise<ShortRow | null> {
   if (error) throw error;
   if (!data) return null;
 
-  const { error: claimError } = await supabase
+  const { data: claimed, error: claimError } = await supabase
     .from("shorts")
     .update({ status: "processing" })
     .eq("id", data.id)
-    .eq("status", "regenerating");
+    .eq("status", "regenerating")
+    .select()
+    .maybeSingle();
   if (claimError) throw claimError;
 
-  return { ...data, status: "processing" };
+  return claimed; // null means another worker's update won the race for this short
 }
 
 /**

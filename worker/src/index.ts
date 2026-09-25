@@ -22,10 +22,10 @@ process.on("SIGTERM", () => {
 });
 
 // One thing at a time, same as before — a full project job, a short regenerate, and a preview
-// frame extraction all share this single sequential loop (see claimNextJob's own "fine for a
-// single-worker v1" comment). Project jobs are checked first since they're the original, highest-
-// volume path; a big job in flight simply makes a queued regenerate/preview wait its turn, same
-// accepted limitation as everything else in this single-worker design.
+// frame extraction all share this single sequential loop -- one worker process, one thing at a
+// time, by design (see claimNextJob's comment on what actually makes claiming safe if that ever
+// changes). Project jobs are checked first since they're the original, highest-volume path; a big
+// job in flight simply makes a queued regenerate/preview wait its turn.
 async function tick(): Promise<void> {
   try {
     const job = await claimNextJob(jobsStillWaiting());
