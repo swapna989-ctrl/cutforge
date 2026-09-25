@@ -104,6 +104,19 @@ export async function chargeProjectCredits(
 }
 
 /**
+ * Puts back exactly what chargeProjectCredits took, into whichever plan/paid/free buckets it
+ * actually came from (see refund_project_credits in supabase/migrations/0030_refund_credits_on_failure.sql)
+ * -- called once a job has definitively failed, so a video that delivered zero clips doesn't also
+ * cost the user their credits. Safe to call on a project that was never charged (returns 0) and
+ * safe to call twice (a second call is a no-op) -- the caller doesn't need to know which case it is.
+ */
+export async function refundProjectCredits(projectId: string): Promise<number> {
+  const { data, error } = await supabase.rpc("refund_project_credits", { p_project_id: projectId }).single();
+  if (error) throw new Error(error.message);
+  return (data as { refunded_credits: number }).refunded_credits;
+}
+
+/**
  * How many credits this user could spend right now -- the same sum the frontend shows
  * (billing.tsx's availableCredits): this cycle's plan allowance (only while a plan is active), plus
  * paid, plus free. Read-only and advisory: used to refuse an obviously unaffordable link *before*

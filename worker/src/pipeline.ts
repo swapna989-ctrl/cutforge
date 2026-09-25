@@ -23,7 +23,16 @@ import { transcribeSegments } from "./transcribe.js";
 import { planClips } from "./clipPlanner.js";
 import { renderShort, clipSourceKey, type RenderSettings } from "./render.js";
 import { runPool, clipConcurrency } from "./pool.js";
-import { updateJob, getProjectClips, createShorts, updateShort, chargeProjectCredits, getAvailableCredits, type ProjectRow } from "./supabase.js";
+import {
+  updateJob,
+  getProjectClips,
+  createShorts,
+  updateShort,
+  chargeProjectCredits,
+  refundProjectCredits,
+  getAvailableCredits,
+  type ProjectRow,
+} from "./supabase.js";
 import { toUserMessage, UserFacingError, DownloadBlockedError } from "./errors.js";
 import { scheduleBlockedRetry, clearBlockedRetry } from "./blockedRetry.js";
 
@@ -468,10 +477,25 @@ export async function processJob(job: ProjectRow): Promise<void> {
     // "...\n[env] build=... cpus=4 totalmem=1024MB..." under a failed project is exactly the kind
     // of internal-debug leak this file exists to stop.
     console.error(`Job ${job.id} failed:`, err, `[env] ${environmentReport()}`);
+
+    // A total failure delivered nothing, so the charge (see chargeProjectCredits above) shouldn't
+    // stand -- refund whatever was actually taken, straight back into the same plan/paid/free
+    // buckets it came from. Safe to call even when nothing was ever charged (a job that failed
+    // before reaching that step, or a blocked-and-retried one): refund_project_credits recognizes
+    // that and simply returns 0. Its own failure is logged, not thrown -- the user still needs to
+    // see their job marked failed even if the refund itself couldn't be recorded this time.
+    let refundedCredits = 0;
+    try {
+      refundedCredits = await refundProjectCredits(job.id);
+    } catch (refundErr) {
+      console.error(`Job ${job.id}: refund failed (the failure itself is still recorded):`, refundErr);
+    }
+    const refundNote = refundedCredits > 0 ? " Your credits for this video have been refunded." : "";
+
     await updateJob(job.id, {
       pipeline_status: "failed",
       status_message: null,
-      error_message: toUserMessage(err),
+      error_message: toUserMessage(err) + refundNote,
     }).catch((updateErr) => console.error("Also failed to record the failure:", updateErr));
   } finally {
     for (const s of registeredStreams) s.dispose();
