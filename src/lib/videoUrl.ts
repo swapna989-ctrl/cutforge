@@ -77,6 +77,14 @@ export function parseVideoUrl(raw: string): VideoUrlCheck {
 
 export const PLATFORM_LABEL: Record<VideoPlatform, string> = { youtube: "YouTube", twitch: "Twitch" };
 
+/** YouTube's own thumbnail, guessable straight from the video id -- no API call, so it's ready to
+ *  show the instant a link is pasted, well before the worker ever fetches anything. Twitch has no
+ *  equivalent unauthenticated static URL, so this only ever returns something for a youtube link. */
+export function youtubeThumbnailUrl(url: string): string | null {
+  const m = url.match(/[?&]v=([A-Za-z0-9_-]{11})(?:&|$)/);
+  return m ? `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` : null;
+}
+
 /** What a link project is called on the dashboard until the worker replaces it with the video's
  *  real title: the address without the scheme and www, e.g. "youtube.com/watch?v=aqz-KE-bpKQ". */
 export function shortLabel(url: string): string {

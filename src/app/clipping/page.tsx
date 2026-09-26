@@ -10,7 +10,7 @@ import { useRequireAuth } from "@/lib/auth";
 import { usePrefs } from "@/lib/prefs";
 import { useBilling } from "@/lib/billing";
 import { creditsForDuration, getMoreCreditsHint, formatCredits, FREE_SIGNUP_CREDITS } from "@/lib/pricing";
-import { parseVideoUrl, shortLabel } from "@/lib/videoUrl";
+import { parseVideoUrl, shortLabel, youtubeThumbnailUrl } from "@/lib/videoUrl";
 import { readVideoDuration, uploadClipToR2, validateVideoFileBasics, validateVideoDuration } from "@/lib/upload";
 import { listProjects, createProject, createProjectClip, type Project } from "@/lib/projects";
 import type { Ratio, CaptionStyle, CaptionFont, CaptionPosition, CaptionLanguage, CaptionLineCount, ClipLength } from "@/lib/pipeline";
@@ -53,6 +53,11 @@ export default function ClippingPage() {
     creditsEstimate: number | null;
     uploadDone: boolean;
     files: { sourceKey: string; fileName: string; duration: number | null }[];
+    // YouTube's own thumbnail, guessed straight from the pasted link (see youtubeThumbnailUrl) --
+    // null for Twitch (no equivalent unauthenticated URL) and for file uploads (nothing to guess
+    // a cover from until the worker actually looks at the file). Shown immediately, before the
+    // "Checking your YouTube link…" step even starts, since it needs no network round trip to Flovura.
+    coverImage: string | null;
   } | null>(null);
   const [optionRatio, setOptionRatio] = useState<Ratio>("9:16");
   const [optionCaptionStyle, setOptionCaptionStyle] = useState<CaptionStyle>("classic");
@@ -211,6 +216,7 @@ export default function ClippingPage() {
       creditsEstimate: creditsNeeded,
       uploadDone: false,
       files: [],
+      coverImage: null,
     });
 
     try {
@@ -271,7 +277,7 @@ export default function ClippingPage() {
     setGenerateError(null);
     setRightsConfirmed(false);
     setMoreOptionsOpen(false);
-    setPending({ kind: "url", label: link.url, creditsEstimate: null, uploadDone: true, files: [] });
+    setPending({ kind: "url", label: link.url, creditsEstimate: null, uploadDone: true, files: [], coverImage: youtubeThumbnailUrl(link.url) });
   }
 
   /** The actual hand-off to the worker, for either kind of pending submission — deliberately the
@@ -424,6 +430,22 @@ export default function ClippingPage() {
             </div>
 
             <div className="px-5 py-5 space-y-6 overflow-y-auto">
+              {pending.coverImage && (
+                // YouTube's own thumbnail, guessed from the pasted link (see youtubeThumbnailUrl) --
+                // shown the instant the popup opens, no network round trip to Flovura needed, well
+                // before "Checking your YouTube link…" even starts. A dead/removed video is the only
+                // realistic way this 404s (real ids always have an hqdefault.jpg); onError just drops
+                // the banner rather than showing a broken-image icon.
+                <img
+                  src={pending.coverImage}
+                  alt=""
+                  className="w-full aspect-video rounded-xl object-cover border border-[#ECE5E6] -mt-1"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
+
               <CaptionStyleCarousel value={optionCaptionStyle} onChange={setOptionCaptionStyle} />
 
               <RatioPicker value={optionRatio} onChange={setOptionRatio} />
