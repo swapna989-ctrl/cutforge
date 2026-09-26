@@ -16,6 +16,8 @@ import {
   CREDIT_PACKS,
   canBuyCreditPacks,
   formatCredits,
+  BETA_LAUNCH_DISCOUNT_PERCENT,
+  discountedMonthlyPrice,
   type BillingCycle,
   type PlanTier,
 } from "@/lib/pricing";
@@ -164,7 +166,13 @@ export default function PricingPage() {
             // The plan you're on stays disabled until it's close to ending, then it's a Renew button.
             const renewable = isCurrentCycle && canRenew;
             const disabled = busy !== null || (isCurrentCycle && !renewable);
-            const price = cycle === "monthly" ? cfg.priceMonthly : cfg.priceYearlyPerMonth;
+            // Same rule as the public pricing page: the real charge is only ever discounted for a
+            // genuine first payment (server-checked in create-order/route.ts against real payment
+            // history). Already being on this exact tier+cycle is the one case this page itself can
+            // tell is definitely a renewal, so the display skips the discount there too rather than
+            // showing a price the server won't actually honor.
+            const showDiscount = cycle === "monthly" && BETA_LAUNCH_DISCOUNT_PERCENT > 0 && !isCurrentCycle;
+            const price = cycle === "monthly" ? (showDiscount ? discountedMonthlyPrice(tier) : cfg.priceMonthly) : cfg.priceYearlyPerMonth;
             return (
               <div
                 key={tier}
@@ -179,7 +187,15 @@ export default function PricingPage() {
                 )}
                 <span className="text-lg font-semibold text-[#1d1b1e] mt-2">{TIER_LABEL[tier]}</span>
                 <p className="text-xs text-[#7B7579] mt-1 mb-4">{TIER_BLURB[tier]}</p>
+                {showDiscount && (
+                  <span className="self-center px-2 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[9px] font-bold uppercase tracking-wide mb-1.5">
+                    Beta launch — {BETA_LAUNCH_DISCOUNT_PERCENT}% off your first month
+                  </span>
+                )}
                 <div className="mb-1">
+                  {showDiscount && (
+                    <span className="text-sm text-[#B3ACA6] line-through mr-1.5">₹{cfg.priceMonthly.toLocaleString("en-IN")}</span>
+                  )}
                   <span className="text-2xl font-semibold text-[#9a4153]">₹{price.toLocaleString("en-IN")}</span>
                   <span className="text-xs text-[#7B7579]"> / month</span>
                 </div>

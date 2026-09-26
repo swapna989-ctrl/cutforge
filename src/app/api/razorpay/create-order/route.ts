@@ -4,7 +4,7 @@ import Razorpay from "razorpay";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
-import { TIER_CONFIG, TIER_ORDER, CREDIT_PACKS, canBuyCreditPacks, type PlanTier, type BillingCycle } from "@/lib/pricing";
+import { TIER_CONFIG, TIER_ORDER, CREDIT_PACKS, canBuyCreditPacks, discountedMonthlyPrice, type PlanTier, type BillingCycle } from "@/lib/pricing";
 
 type CreateOrderBody =
   | { kind: "credit_pack"; packCredits: number }
@@ -62,7 +62,22 @@ export async function POST(request: Request) {
     const cfg = TIER_CONFIG[body.tier];
     // Yearly bills the real one-time total up front (this is a manual re-charge model, not real
     // recurring billing) — priceYearlyPerMonth is only ever the *displayed* per-month rate.
-    amountRupees = body.cycle === "monthly" ? cfg.priceMonthly : cfg.priceYearlyTotal;
+    if (body.cycle === "monthly") {
+      // Beta-launch discount: 30% off, but only this user's actual FIRST payment, checked here
+      // against real payment history rather than trusted from the client -- a manual re-charge
+      // model has no other signal for "is this a renewal", and the client can't be trusted to say
+      // so honestly. Yearly never gets this: it's already its own discounted rate.
+      const { data: priorPaid } = await getSupabaseAdmin()
+        .from("payments")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("status", "paid")
+        .limit(1)
+        .maybeSingle();
+      amountRupees = priorPaid ? cfg.priceMonthly : discountedMonthlyPrice(body.tier);
+    } else {
+      amountRupees = cfg.priceYearlyTotal;
+    }
     description = `${body.tier} plan (${body.cycle})`;
     insertFields = { kind: "subscription", tier: body.tier, billing_cycle: body.cycle, credit_amount: null };
   }

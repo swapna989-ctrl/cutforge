@@ -10,6 +10,8 @@ import {
   TIER_BLURB,
   TIER_FEATURES,
   FREE_SIGNUP_CREDITS,
+  BETA_LAUNCH_DISCOUNT_PERCENT,
+  discountedMonthlyPrice,
   type BillingCycle,
 } from "@/lib/pricing";
 
@@ -34,7 +36,7 @@ export default function PublicPricing() {
           Prices in INR, inclusive of 18% GST. Every plan clips watermark-free, and every new account starts with {FREE_SIGNUP_CREDITS} free credits — no card
           required.
         </p>
-        <p className="text-xs text-[#B3ACA6] mt-2">Paid plans are launching soon.</p>
+        <p className="text-xs text-[#B3ACA6] mt-2">Sign up free, then subscribe from your dashboard whenever you're ready.</p>
       </div>
 
       <section>
@@ -73,7 +75,12 @@ export default function PublicPricing() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-5xl mx-auto items-stretch">
           {TIER_ORDER.map((tier) => {
             const cfg = TIER_CONFIG[tier];
-            const price = cycle === "monthly" ? cfg.priceMonthly : cfg.priceYearlyPerMonth;
+            // The beta-launch discount only ever applies to a monthly plan's real first payment
+            // (checked server-side in create-order/route.ts against actual payment history) -- shown
+            // here unconditionally for monthly since a beta launch's whole point is new signups, and
+            // the server enforces the real rule regardless of what any visitor's browser displays.
+            const showDiscount = cycle === "monthly" && BETA_LAUNCH_DISCOUNT_PERCENT > 0;
+            const price = cycle === "monthly" ? (showDiscount ? discountedMonthlyPrice(tier) : cfg.priceMonthly) : cfg.priceYearlyPerMonth;
             return (
               <div
                 key={tier}
@@ -88,7 +95,15 @@ export default function PublicPricing() {
                 )}
                 <h3 className="text-lg font-semibold text-[#1d1b1e] mt-2">{TIER_LABEL[tier]}</h3>
                 <p className="text-xs text-[#7B7579] mt-1 mb-4">{TIER_BLURB[tier]}</p>
+                {showDiscount && (
+                  <span className="self-center px-2 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[9px] font-bold uppercase tracking-wide mb-1.5">
+                    Beta launch — {BETA_LAUNCH_DISCOUNT_PERCENT}% off your first month
+                  </span>
+                )}
                 <div className="mb-1">
+                  {showDiscount && (
+                    <span className="text-sm text-[#B3ACA6] line-through mr-1.5">₹{cfg.priceMonthly.toLocaleString("en-IN")}</span>
+                  )}
                   <span className="text-2xl font-semibold text-[#9a4153]">₹{price.toLocaleString("en-IN")}</span>
                   <span className="text-xs text-[#7B7579]"> / month</span>
                 </div>

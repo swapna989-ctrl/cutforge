@@ -31,6 +31,19 @@ export const TIER_CONFIG: Record<Exclude<PlanTier, "none">, {
 
 export const TIER_ORDER: Exclude<PlanTier, "none">[] = ["starter", "creator", "agency"];
 
+// Beta-launch pricing: 30% off a monthly plan's first payment only, all three tiers -- never
+// yearly (that's already its own, separate discounted rate), and never a later renewal (checked
+// server-side in create-order/route.ts against whether this user has ever had a payment marked
+// 'paid', not just trusted from the client). Set to 0 to end the promotion without touching
+// anything else -- callers all route through discountedMonthlyPrice, so nothing needs updating
+// beyond this one number.
+export const BETA_LAUNCH_DISCOUNT_PERCENT = 30;
+
+/** A tier's monthly price after the first-payment beta discount, rounded to the nearest rupee. */
+export function discountedMonthlyPrice(tier: Exclude<PlanTier, "none">): number {
+  return Math.round(TIER_CONFIG[tier].priceMonthly * (1 - BETA_LAUNCH_DISCOUNT_PERCENT / 100));
+}
+
 export const TIER_BLURB: Record<Exclude<PlanTier, "none">, string> = {
   starter: "For getting your first clips out the door.",
   creator: "For creators publishing shorts every week.",

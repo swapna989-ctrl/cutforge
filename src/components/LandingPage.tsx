@@ -5,7 +5,16 @@ import Link from "next/link";
 import Image from "next/image";
 import { Playfair_Display } from "next/font/google";
 import PublicFooter from "@/components/PublicFooter";
-import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, TIER_BLURB, TIER_FEATURES, FREE_SIGNUP_CREDITS } from "@/lib/pricing";
+import {
+  TIER_CONFIG,
+  TIER_ORDER,
+  TIER_LABEL,
+  TIER_BLURB,
+  TIER_FEATURES,
+  FREE_SIGNUP_CREDITS,
+  BETA_LAUNCH_DISCOUNT_PERCENT,
+  discountedMonthlyPrice,
+} from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
 
@@ -115,6 +124,9 @@ export default function LandingPage() {
             <a href="#pricing" className="text-sm text-[#544244] hover:text-[#1d1b1e] transition-colors">
               Pricing
             </a>
+            <Link href="/community" className="text-sm text-[#544244] hover:text-[#1d1b1e] transition-colors">
+              Community
+            </Link>
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3">
@@ -278,6 +290,9 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-5xl mx-auto mt-10 items-stretch">
             {TIER_ORDER.map((tier) => {
               const cfg = TIER_CONFIG[tier];
+              // Same beta-launch discount as PublicPricing/pricing-account -- the server is what
+              // actually enforces "first payment only" (create-order/route.ts); this is just display.
+              const showDiscount = BETA_LAUNCH_DISCOUNT_PERCENT > 0;
               return (
                 <div
                   key={tier}
@@ -292,8 +307,18 @@ export default function LandingPage() {
                   )}
                   <span className="text-lg font-semibold text-[#1d1b1e] mt-2">{TIER_LABEL[tier]}</span>
                   <p className="text-xs text-[#7B7579] mt-1 mb-4">{TIER_BLURB[tier]}</p>
+                  {showDiscount && (
+                    <span className="self-center px-2 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[9px] font-bold uppercase tracking-wide mb-1.5">
+                      Beta launch — {BETA_LAUNCH_DISCOUNT_PERCENT}% off your first month
+                    </span>
+                  )}
                   <div className="mb-1">
-                    <span className="text-2xl font-semibold text-[#9a4153]">₹{cfg.priceMonthly.toLocaleString("en-IN")}</span>
+                    {showDiscount && (
+                      <span className="text-sm text-[#B3ACA6] line-through mr-1.5">₹{cfg.priceMonthly.toLocaleString("en-IN")}</span>
+                    )}
+                    <span className="text-2xl font-semibold text-[#9a4153]">
+                      ₹{(showDiscount ? discountedMonthlyPrice(tier) : cfg.priceMonthly).toLocaleString("en-IN")}
+                    </span>
                     <span className="text-xs text-[#7B7579]"> / month</span>
                   </div>
                   <p className="text-[11px] text-[#7B7579] mb-3">or ₹{cfg.priceYearlyPerMonth.toLocaleString("en-IN")}/mo billed yearly</p>
