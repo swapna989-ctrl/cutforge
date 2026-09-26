@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Playfair_Display } from "next/font/google";
@@ -8,6 +8,15 @@ import PublicFooter from "@/components/PublicFooter";
 import { TIER_CONFIG, TIER_ORDER, TIER_LABEL, TIER_BLURB, TIER_FEATURES, FREE_SIGNUP_CREDITS } from "@/lib/pricing";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["500", "600"], style: ["normal", "italic"] });
+
+// Three of the eight caption-style demo previews (see CaptionStyleCarousel.tsx), picked for visual
+// variety in a small space -- a plain white/black style, a colored per-word highlight, and glow's
+// halo effect. Scores are illustrative, matching the layout's original placeholder numbers.
+const HERO_SHORTS: { score: number; style: string }[] = [
+  { score: 87, style: "glow" },
+  { score: 74, style: "punch" },
+  { score: 92, style: "rose" },
+];
 
 const STEPS = [
   {
@@ -83,6 +92,9 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 }
 
 export default function LandingPage() {
+  const [sourceHovering, setSourceHovering] = useState(false);
+  const sourceVideoRef = useRef<HTMLVideoElement>(null);
+
   return (
     <div className="min-h-screen bg-[#FAF8F7]">
       <header className="sticky top-0 z-40 w-full bg-[#FAF8F7]/90 backdrop-blur-xl border-b border-[#ECE5E6]">
@@ -147,26 +159,50 @@ export default function LandingPage() {
             <p className="text-xs text-[#B3ACA6] mt-4">{FREE_SIGNUP_CREDITS} free credits to start · no card required</p>
           </div>
 
-          {/* Abstract "one long video -> three vertical shorts" illustration — not a screenshot of
-              the real product, just a stylized shape of what it does. */}
+          {/* Real product output, not a mockup -- the same demo footage and per-style renders used
+              in the caption-style picker (CaptionStyleCarousel.tsx), reused here so a new visitor's
+              very first look at Flovura is actual captioned output, not an abstract wireframe. */}
           <div className="flex items-center justify-center gap-4">
-            <div className="w-32 sm:w-40 aspect-video rounded-2xl bg-white border border-[#ECE5E6] shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] flex items-center justify-center shrink-0">
-              <span className="material-symbols-outlined text-[32px] text-[#B3ACA6]">play_circle</span>
+            <div
+              className="relative w-32 sm:w-40 aspect-video rounded-2xl overflow-hidden bg-[#1a1a1a] border border-[#ECE5E6] shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] shrink-0 cursor-pointer"
+              onMouseEnter={() => {
+                setSourceHovering(true);
+                sourceVideoRef.current?.play().catch(() => {});
+              }}
+              onMouseLeave={() => {
+                setSourceHovering(false);
+                sourceVideoRef.current?.pause();
+              }}
+            >
+              {sourceHovering ? (
+                <video
+                  ref={sourceVideoRef}
+                  src="/caption-previews/none.mp4"
+                  poster="/caption-previews/none.jpg"
+                  muted
+                  loop
+                  playsInline
+                  autoPlay
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <img src="/caption-previews/none.jpg" alt="Source video" className="w-full h-full object-cover" />
+              )}
+              <div className="absolute inset-0 flex items-center justify-center bg-black/10 pointer-events-none">
+                <span className="material-symbols-outlined text-[32px] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">play_circle</span>
+              </div>
             </div>
             <span className="material-symbols-outlined text-[22px] text-[#D8D0CE] shrink-0">arrow_forward</span>
             <div className="flex gap-2.5">
-              {[87, 74, 92].map((score, i) => (
+              {HERO_SHORTS.map(({ score, style }, i) => (
                 <div
-                  key={i}
-                  className={`w-14 sm:w-16 aspect-[9/16] rounded-xl bg-white border border-[#ECE5E6] shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] flex flex-col justify-between p-1.5 ${
+                  key={style}
+                  className={`relative w-14 sm:w-16 aspect-[9/16] rounded-xl overflow-hidden bg-[#1a1a1a] border border-[#ECE5E6] shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] ${
                     i === 1 ? "translate-y-3" : ""
                   }`}
                 >
-                  <span className="self-start px-1.5 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[8px] font-bold">{score}</span>
-                  <div className="space-y-1">
-                    <div className="h-1 rounded-full bg-[#ECE5E6] w-full" />
-                    <div className="h-1 rounded-full bg-[#ECE5E6] w-2/3" />
-                  </div>
+                  <img src={`/caption-previews/${style}.jpg`} alt="" className="w-full h-full object-cover" />
+                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-[#fdd5e1] text-[#9a4153] text-[8px] font-bold">{score}</span>
                 </div>
               ))}
             </div>
