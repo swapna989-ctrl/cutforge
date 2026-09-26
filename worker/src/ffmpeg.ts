@@ -627,13 +627,17 @@ const CAPTION_PRESETS: Record<BurnedCaptionStyle, CaptionPresetSpec> = {
     // it — confirmed by real render/frame comparison against a reference "strong glow" screenshot.
     outlineWidth: 2,
     highlightColor: null,
-    // 24/6 (the original values) read as barely more than a faint ring around the letters, not a
-    // real glow — confirmed by direct comparison against a reference screenshot showing a wide, soft,
-    // clearly-visible bloom. Bumped until it matched: verified by rendering several intensities side
-    // by side (24/6, 36/10, 44/14, 50/16) and picking the one closest to the reference rather than
-    // guessing a single number. Above ~44/14, adjacent letters start fusing into one solid blob and
-    // the per-letter shape is lost entirely — this stays just under that line. See CaptionPresetSpec.glow.
-    glow: { haloBorder: 44, haloBlur: 14, haloColor: "&HFFFFFF&" },
+    // First fix (24/6 -> 44/14, scaling border and blur up together) still read as "a flat white
+    // blob with a merely-soft edge", not a real glow — user feedback confirmed it was still wrong
+    // even wider. Root cause: blur only softens the OUTER rim of whatever shape \bord already drew,
+    // so a big border stays a big flat solid shape no matter how much blur is added on top; the
+    // falloff never reaches the shape's interior. A real radiating glow needs the OPPOSITE ratio --
+    // a SMALL border (just past the crisp outline) with blur radius well beyond it, so the gradient
+    // falloff spreads across the entire halo instead of just its edge. Confirmed by rendering both
+    // approaches side by side (equal-ratio and border-scaled-with-blur variants all still look like a
+    // blob; border substantially smaller than blur reads as an actual glow) and matching the result
+    // against the reference screenshot. See CaptionPresetSpec.glow.
+    glow: { haloBorder: 16, haloBlur: 26, haloColor: "&HFFFFFF&" },
   },
   punch: {
     fontSize: 68,
