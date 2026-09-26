@@ -4,6 +4,7 @@ import { useState } from "react";
 import Script from "next/script";
 import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
+import { PaymentMethodsStrip } from "@/components/PublicPricing";
 import { useRequireAuth } from "@/lib/auth";
 import { useBilling } from "@/lib/billing";
 import { startCheckout, type CheckoutRequest } from "@/lib/checkout";
@@ -240,6 +241,8 @@ export default function PricingPage() {
             );
           })}
         </div>
+
+        <PaymentMethodsStrip />
       </section>
 
       {/* Subscribers only -- a free-tier account never sees these (see canBuyCreditPacks). */}

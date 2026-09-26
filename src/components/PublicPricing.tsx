@@ -129,7 +129,37 @@ export default function PublicPricing() {
             );
           })}
         </div>
+
+        <PaymentMethodsStrip />
       </section>
     </>
+  );
+}
+
+/** What checkout actually supports, shown as a trust signal before anyone has to click through to
+ *  Razorpay's own checkout to find out -- generic category icons rather than each provider's own
+ *  trademarked logo (Visa/Mastercard/RuPay/UPI apps), which would need each sourced and cleared
+ *  from its own brand page individually. Razorpay's own checkout modal shows the real logos at the
+ *  moment of payment; this is just the "yes, these kinds of payment are supported" preview. */
+export function PaymentMethodsStrip() {
+  const methods: { icon: string; label: string }[] = [
+    { icon: "credit_card", label: "Cards" },
+    { icon: "qr_code_2", label: "UPI" },
+    { icon: "account_balance", label: "Netbanking" },
+    { icon: "account_balance_wallet", label: "Wallets" },
+  ];
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 mt-8 pt-6 border-t border-[#ECE5E6]">
+      {methods.map((m) => (
+        <span key={m.label} className="flex items-center gap-1.5 text-xs text-[#7B7579]">
+          <span className="material-symbols-outlined text-[16px] text-[#B3ACA6]">{m.icon}</span>
+          {m.label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1.5 text-xs text-[#B3ACA6] sm:pl-2 sm:border-l sm:border-[#ECE5E6]">
+        <span className="material-symbols-outlined text-[14px]">lock</span>
+        Secured by Razorpay
+      </span>
+    </div>
   );
 }
