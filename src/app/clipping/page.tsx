@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Playfair_Display } from "next/font/google";
 import DashboardShell from "@/components/DashboardShell";
@@ -72,6 +73,14 @@ export default function ClippingPage() {
   // changing (rather than a plain boolean) so a second submission re-triggers it even while an
   // earlier toast is still fading out.
   const [toastToken, setToastToken] = useState<string | null>(null);
+  // A portal target only exists once mounted in the browser -- on the server (and for the one
+  // render before hydration) there's no document.body to render the popup into yet. Same pattern
+  // as NavDrawer's own portal, for the same reason (see the popup's own portal below).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reacting to "we're now in the browser post-hydration", an external fact, not derivable from props/state
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!ready || !user) return;
@@ -373,10 +382,21 @@ export default function ClippingPage() {
 
       <ClippingStartedToast token={toastToken} />
 
-      {pending && (
+      {mounted && pending && createPortal(
         /* The configure step — a real popup now (matching how every other "set this project up"
            decision in this app already reads as a distinct step, not a settings page no one would
-           think to check first), opened the moment a link's been submitted or a file picked. */
+           think to check first), opened the moment a link's been submitted or a file picked.
+           Portalled straight to <body> -- DashboardShell's <main> is `relative z-10`, which (like
+           WorkspaceShell's own header, see NavDrawer's identical portal) creates a new stacking
+           context. That trapped this popup's z-50 UNDER DashboardShell's z-40 sticky header instead
+           of above it, since z-index only ever competes within one stacking context: the header and
+           <main> are siblings compared directly (40 beats 10), and everything z-50 inside <main>'s
+           own context, however high, never gets to join that comparison. Confirmed directly against
+           a real render: document.elementFromPoint on the popup's own header returned the dashboard
+           header instead, at a screen position squarely inside the popup's own (correctly computed,
+           never actually clipped) bounding box -- not a scroll or overflow bug at all, despite
+           reading exactly like one ("stuck", "can't scroll past it") whenever the popup's vertical
+           position happened to land within the sticky header's own height. */
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-[#1d1b1e]/40 backdrop-blur-[2px] p-4">
           {/* The card's own max-h + this wrapper's my-6 sum to exactly 100vh (3rem = 1.5rem*2), so
               the card can never be taller than the viewport -- it never needs to be scrolled INTO
@@ -584,7 +604,8 @@ export default function ClippingPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {!pending && (
