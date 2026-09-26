@@ -23,16 +23,20 @@ const STEPS = [
     title: "Upload or paste a link",
     body: "MP4, MOV, AVI, or MKV up to 5GB — or paste a YouTube or Twitch link. Videos must be 5 minutes to 3 hours long.",
     icon: "cloud_upload",
+    // The plain, not-yet-captioned demo frame -- nothing to find or burn in yet at this step.
+    previewImage: "/caption-previews/none.jpg",
   },
   {
     title: "AI finds the moments",
     body: "Flovura transcribes your footage and plans as many clips as it genuinely supports, each with its own hook, caption, and AI-estimated viral score.",
     icon: "auto_awesome",
+    previewImage: "/caption-previews/bold_yellow.jpg",
   },
   {
     title: "Download, ready to post",
     body: "Vertical or horizontal, captions already burned in, no watermark on paid plans.",
     icon: "download",
+    previewImage: "/caption-previews/vlog.jpg",
   },
 ];
 
@@ -217,8 +221,13 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
             {STEPS.map((step, i) => (
               <div key={step.title} className="text-center sm:text-left">
-                <div className="w-11 h-11 rounded-2xl bg-[#fdd5e1]/60 text-[#9a4153] flex items-center justify-center mb-4 mx-auto sm:mx-0">
-                  <span className="material-symbols-outlined text-[22px]">{step.icon}</span>
+                {/* Real output at each step, not just an icon -- continues the same "actual product,
+                    not a mockup" idea as the hero above, one step of it at a time. */}
+                <div className="relative w-16 aspect-[9/16] rounded-xl overflow-hidden bg-[#1a1a1a] border border-[#ECE5E6] shadow-[0_2px_8px_-2px_rgba(42,39,42,0.04),0_8px_24px_-4px_rgba(42,39,42,0.06)] mb-4 mx-auto sm:mx-0">
+                  <img src={step.previewImage} alt="" className="w-full h-full object-cover" />
+                  <div className="absolute top-1.5 left-1.5 w-6 h-6 rounded-lg bg-[#fdd5e1]/90 text-[#9a4153] flex items-center justify-center">
+                    <span className="material-symbols-outlined text-[14px]">{step.icon}</span>
+                  </div>
                 </div>
                 <h3 className="text-sm font-semibold text-[#1d1b1e] mb-1.5">
                   {i + 1}. {step.title}
