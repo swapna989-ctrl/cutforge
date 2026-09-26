@@ -41,6 +41,9 @@ export default function PublicFooter() {
           <Link href="/pricing" className={LINK_CLASS}>
             Pricing
           </Link>
+          <Link href="/community" className={LINK_CLASS}>
+            Community
+          </Link>
           <Link href="/privacy" className={LINK_CLASS}>
             Privacy
           </Link>

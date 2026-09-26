@@ -14,6 +14,7 @@ const REAL_NAV_ITEMS = [
   { href: "/dashboard", label: "Home", icon: "home" },
   { href: "/clipping", label: "Clipping", icon: "content_cut" },
   { href: "/pricing", label: "Go Pro", icon: "bolt" },
+  { href: "/community", label: "Community", icon: "forum" },
 ];
 
 // Not real features yet — shown for visual consistency with the reference design, deliberately
