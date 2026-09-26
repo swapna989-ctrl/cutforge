@@ -20,6 +20,9 @@ export type Project = {
   outputKey: string | null;
   /** Credits this project used, once the worker has measured its length and charged for it; 0 before that. */
   creditsCharged: number;
+  /** Null for an uploaded file (nothing to derive a cover image from) or a Twitch link (no
+   *  equivalent unauthenticated thumbnail URL) -- see youtubeThumbnailUrl. */
+  sourceUrl: string | null;
 };
 
 type ProjectRow = {
@@ -39,6 +42,7 @@ type ProjectRow = {
   error_message: string | null;
   output_key: string | null;
   credits_charged: number | null;
+  source_url: string | null;
 };
 
 function mapRow(row: ProjectRow): Project {
@@ -61,6 +65,7 @@ function mapRow(row: ProjectRow): Project {
     errorMessage: row.error_message,
     outputKey: row.output_key,
     creditsCharged: row.credits_charged ?? 0,
+    sourceUrl: row.source_url,
   };
 }
 

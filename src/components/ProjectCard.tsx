@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Project } from "@/lib/projects";
 import { deleteProject, listShorts } from "@/lib/projects";
+import { youtubeThumbnailUrl } from "@/lib/videoUrl";
 import CircularProgress from "@/components/CircularProgress";
 
 export default function ProjectCard({ project, onDeleted }: { project: Project; onDeleted: (id: string) => void }) {
@@ -94,11 +95,29 @@ export default function ProjectCard({ project, onDeleted }: { project: Project; 
   // experience, rather than linking out to a workspace screen with nothing to show.
   const isNavigable = isReady || isFailed;
 
+  // While actively processing a YouTube link, show its own real thumbnail behind the progress ring
+  // instead of a blank card -- same instant, no-API-call thumbnail guess as the setup modal
+  // (youtubeThumbnailUrl), just carried through to this later stage too. Null for an uploaded file
+  // (nothing to derive one from) or a Twitch link (no equivalent unauthenticated thumbnail URL), and
+  // deliberately not shown once ready/failed/ingesting -- those already have their own real image or
+  // icon.
+  const processingCover = !isReady && !isFailed && !isIngesting && project.sourceUrl ? youtubeThumbnailUrl(project.sourceUrl) : null;
+
   const cardBody = (
     <>
       <div className="relative w-full aspect-video bg-[#FAF8F7]">
         {videoSrc ? (
           <video src={videoSrc} poster={posterSrc ?? undefined} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+        ) : processingCover ? (
+          <>
+            <img src={processingCover} alt="" className="w-full h-full object-cover" />
+            {/* A light scrim, not a dark one: CircularProgress's own ring/text colors (#ed8395 /
+                #1d1b1e) are tuned for this card's usual light background -- a dark overlay would
+                make its dark percentage text nearly unreadable instead of improving contrast. */}
+            <div className="absolute inset-0 flex items-center justify-center bg-[#FAF8F7]/75">
+              <CircularProgress percent={project.progress} />
+            </div>
+          </>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2">
             {isIngesting && <span className="material-symbols-outlined text-[#D8D0CE] text-2xl">edit_note</span>}
